@@ -1,31 +1,57 @@
 "use client";
 
-import { useState } from "react";
-import { PRODUCTS } from "../data/products";
+import { useState, useEffect } from "react";
+import { db } from "./firebase/config"; 
+import { collection, getDocs } from "firebase/firestore";
 import confetti from "canvas-confetti";
 
 export default function Home() {
+  // --- ESTADOS DE DATOS ---
+  const [productos, setProductos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // --- TUS ESTADOS ORIGINALES ---
   const [carrito, setCarrito] = useState<any[]>([]);
   const [mostrarResumen, setMostrarResumen] = useState(false);
   const [busqueda, setBusqueda] = useState("");
   const [categoriaSeleccionada, setCategoriaSeleccionada] = useState("Todos");
   const [mostrarCategorias, setMostrarCategorias] = useState(false);
-  
-  // Control de vista: Inicio o Tienda
   const [verTienda, setVerTienda] = useState(false);
 
   const categorias = ["Todos", "Mates", "Termos", "Bombillas", "Yerberas", "Set Materos", "Despolvillador"];
 
-  const productosFiltrados = PRODUCTS.filter(p => {
-    const coincideBusqueda = p.name.toLowerCase().includes(busqueda.toLowerCase()) || 
-                             p.description.toLowerCase().includes(busqueda.toLowerCase());
+  // --- EFECTO PARA TRAER PRODUCTOS DE FIREBASE ---
+  useEffect(() => {
+    const fetchProductos = async () => {
+      try {
+        const querySnapshot = await getDocs(collection(db, "productos"));
+        const docs = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setProductos(docs);
+      } catch (error) {
+        console.error("Error trayendo productos de Firebase:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchProductos();
+  }, []);
+
+  // --- LÓGICA DE FILTRADO (Ahora usa 'productos' de la nube) ---
+  const productosFiltrados = productos.filter(p => {
+    const name = p.name?.toLowerCase() || "";
+    const desc = p.description?.toLowerCase() || "";
+    const coincideBusqueda = name.includes(busqueda.toLowerCase()) || 
+                             desc.includes(busqueda.toLowerCase());
     const coincideCategoria = categoriaSeleccionada === "Todos" || p.category === categoriaSeleccionada;
     return coincideBusqueda && coincideCategoria;
   });
 
-  // Los 3 destacados de la Home
-  const productosDestacados = PRODUCTS.slice(0, 3);
+  const productosDestacados = productos.slice(0, 3);
 
+  // --- TUS FUNCIONES ORIGINALES ---
   const agregarAlCarrito = (producto: any) => {
     setCarrito([...carrito, producto]);
     confetti({
@@ -38,7 +64,7 @@ export default function Home() {
     setCarrito(carrito.filter((_, index) => index !== indexAEliminar));
   };
 
-  const totalPrecio = carrito.reduce((acc, item) => acc + item.price, 0);
+  const totalPrecio = carrito.reduce((acc, item) => acc + (item.price || 0), 0);
 
   const finalizarPedido = () => {
     if (carrito.length === 0) return;
@@ -50,6 +76,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-[#fdfcf0] pb-20 font-sans text-gray-800">
+      
       {/* --- NAVBAR --- */}
       <nav className="bg-[#4a5d23] text-white p-4 shadow-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-4">
@@ -107,7 +134,7 @@ export default function Home() {
               <div key={index} className="flex justify-between items-center text-sm border-b pb-2">
                 <span>{item.name}</span>
                 <div className="flex items-center gap-2">
-                  <span className="font-bold">${item.price.toLocaleString('es-AR')}</span>
+                  <span className="font-bold">${(item.price || 0).toLocaleString('es-AR')}</span>
                   <button onClick={() => eliminarDelCarrito(index)} className="p-1 hover:bg-gray-100 rounded">🗑️</button>
                 </div>
               </div>
@@ -119,7 +146,12 @@ export default function Home() {
       )}
 
       {/* --- CONTENIDO --- */}
-      {!verTienda ? (
+      {loading ? (
+        <div className="flex flex-col items-center justify-center h-96">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#4a5d23]"></div>
+          <p className="mt-4 text-gray-500 italic">Cargando mates desde la nube...</p>
+        </div>
+      ) : !verTienda ? (
         <>
           <header className="py-20 text-center bg-white border-b border-gray-100">
             <h2 className="text-6xl md:text-8xl font-bold text-gray-800 mb-4 tracking-tighter">Nómade Mates</h2>
@@ -141,7 +173,7 @@ export default function Home() {
                 <div key={producto.id} className="bg-white rounded-3xl overflow-hidden shadow-lg border border-gray-100 p-4 hover:shadow-2xl transition-all">
                   <img src={producto.image} className="h-48 w-full object-cover rounded-2xl mb-4" />
                   <h4 className="text-xl font-bold">{producto.name}</h4>
-                  <p className="text-2xl font-black text-[#4a5d23] my-4">${producto.price.toLocaleString('es-AR')}</p>
+                  <p className="text-2xl font-black text-[#4a5d23] my-4">${(producto.price || 0).toLocaleString('es-AR')}</p>
                   <button onClick={() => agregarAlCarrito(producto)} className="w-full bg-[#4a5d23] text-white py-2 rounded-xl font-bold active:scale-95 transition-all">Agregar al Carrito</button>
                 </div>
               ))}
@@ -191,7 +223,7 @@ export default function Home() {
                   <div>
                     <h4 className="text-xl font-bold mb-2">{producto.name}</h4>
                     <p className="text-gray-500 text-sm mb-4">{producto.description}</p>
-                    <p className="text-3xl font-black text-[#4a5d23] mb-6">${producto.price.toLocaleString('es-AR')}</p>
+                    <p className="text-3xl font-black text-[#4a5d23] mb-6">${(producto.price || 0).toLocaleString('es-AR')}</p>
                   </div>
                   <button onClick={() => agregarAlCarrito(producto)} className="w-full bg-[#4a5d23] text-white py-3 rounded-2xl font-bold shadow-md active:scale-95 transition-all">Agregar al Carrito</button>
                 </div>
@@ -199,7 +231,6 @@ export default function Home() {
             ))}
           </div>
 
-          {/* --- MENSAJE CUANDO NO HAY PRODUCTOS (RESTAURADO) --- */}
           {productosFiltrados.length === 0 && (
             <div className="col-span-full text-center py-20 bg-white rounded-3xl border-2 border-dashed border-gray-100">
                <p className="text-gray-500 text-xl italic mb-4">No encontramos productos en "{categoriaSeleccionada}".</p>
