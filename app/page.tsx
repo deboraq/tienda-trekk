@@ -204,7 +204,7 @@ export default function Home() {
             {!verTienda && (
               <div className="hidden md:block w-48 lg:w-56">
                 <div className="relative">
-                  <span className="absolute inset-y-0 left-3 flex items-center text-gray-400 pointer-events-none">🔍</span>
+                  <span className="absolute inset-y-0 left-3 flex items-center text-white/70 pointer-events-none text-sm">🔍</span>
                   <input
                     type="search"
                     value={busqueda}
@@ -213,11 +213,11 @@ export default function Home() {
                       if (e.target.value.trim()) setVerTienda(true);
                     }}
                     placeholder="Buscar productos..."
-                    className="w-full pl-9 pr-8 py-2 rounded-full border-0 bg-white/95 text-gray-800 placeholder-gray-500 text-sm outline-none focus:ring-2 focus:ring-amber-300"
+                    className="w-full pl-9 pr-8 py-2 rounded-full border border-white/25 bg-white/15 text-white placeholder-white/60 text-sm outline-none focus:bg-white/25 focus:border-white/40 focus:ring-1 focus:ring-white/30 transition-colors"
                     aria-label="Buscar productos"
                   />
                   {busqueda && (
-                    <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1" onClick={() => setBusqueda("")} aria-label="Borrar búsqueda">✕</button>
+                    <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-white/70 hover:text-white p-1 transition-colors" onClick={() => setBusqueda("")} aria-label="Borrar búsqueda">✕</button>
                   )}
                 </div>
               </div>
@@ -230,7 +230,7 @@ export default function Home() {
           <div className="md:hidden mt-4 pt-4 border-t border-white/20 flex flex-col gap-2 text-sm uppercase tracking-widest">
             {!verTienda && (
               <div className="relative mb-2">
-                <span className="absolute inset-y-0 left-3 flex items-center text-gray-400 pointer-events-none">🔍</span>
+                <span className="absolute inset-y-0 left-3 flex items-center text-white/70 pointer-events-none text-sm">🔍</span>
                 <input
                   type="search"
                   value={busqueda}
@@ -239,11 +239,11 @@ export default function Home() {
                     if (e.target.value.trim()) setVerTienda(true);
                   }}
                   placeholder="Buscar productos..."
-                  className="w-full pl-9 pr-8 py-2.5 rounded-full border-0 bg-white/95 text-gray-800 placeholder-gray-500 text-sm normal-case"
+                  className="w-full pl-9 pr-8 py-2.5 rounded-full border border-white/25 bg-white/15 text-white placeholder-white/60 text-sm normal-case outline-none focus:bg-white/25 focus:border-white/40"
                   aria-label="Buscar productos"
                 />
                 {busqueda && (
-                  <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 p-1" onClick={() => setBusqueda("")} aria-label="Borrar">✕</button>
+                  <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-white/70 hover:text-white p-1" onClick={() => setBusqueda("")} aria-label="Borrar">✕</button>
                 )}
               </div>
             )}
