@@ -137,8 +137,8 @@ export default function Home() {
     <main className="min-h-screen bg-[#fdfcf0] pb-20 font-sans text-gray-800">
       
       {/* --- NAVBAR --- */}
-      <nav className="bg-[#4a5d23] text-white p-4 shadow-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto relative flex flex-wrap items-center justify-between gap-4 min-h-[3rem]">
+      <nav className="bg-[#4a5d23] text-white py-3 px-4 shadow-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto relative flex flex-wrap items-center justify-between gap-3">
           {/* Logo (izquierda) */}
           <div className="flex items-center gap-4 shrink-0 z-10">
             <button
@@ -160,7 +160,7 @@ export default function Home() {
 
           {/* Enlaces al centro (solo escritorio) - centrado real en la pantalla */}
           <div className="hidden md:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-            <div className="flex gap-6 text-xs uppercase tracking-widest font-medium">
+            <div className="flex gap-6 text-sm md:text-base uppercase tracking-widest font-medium">
               <button onClick={() => setVerTienda(false)} className="hover:text-amber-200 uppercase transition-colors">Inicio</button>
               <a href="#nosotros" onClick={() => setVerTienda(false)} className="hover:text-amber-200 transition-colors uppercase">Nosotros</a>
               <div className="relative">
@@ -192,18 +192,18 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Derecha: carrito arriba, buscador abajo (solo en pantalla principal) */}
-          <div className="flex flex-col items-end gap-2 shrink-0 z-10">
+          {/* Derecha: carrito y buscador con la misma altura */}
+          <div className="flex flex-col items-end gap-1.5 shrink-0 z-10">
             <button
               onClick={() => setMostrarResumen(!mostrarResumen)}
-              className="bg-white text-[#4a5d23] px-4 py-2 rounded-full font-bold shadow-md text-sm active:scale-95 transition-all w-fit"
+              className="bg-white text-[#4a5d23] px-4 h-10 rounded-full font-bold shadow-md text-sm active:scale-95 transition-all w-fit flex items-center justify-center"
               aria-label={`Tu carrito tiene ${totalItems} producto(s)`}
             >
               🛒 Tu Carrito ({totalItems})
             </button>
             {!verTienda && (
-              <div className="hidden md:block w-48 lg:w-56">
-                <div className="relative">
+              <div className="hidden md:block w-44 lg:w-52">
+                <div className="relative h-10">
                   <span className="absolute inset-y-0 left-3 flex items-center text-white/70 pointer-events-none text-sm">🔍</span>
                   <input
                     type="search"
@@ -213,7 +213,7 @@ export default function Home() {
                       if (e.target.value.trim()) setVerTienda(true);
                     }}
                     placeholder="Buscar productos..."
-                    className="w-full pl-9 pr-8 py-2 rounded-full border border-white/25 bg-white/15 text-white placeholder-white/60 text-sm outline-none focus:bg-white/25 focus:border-white/40 focus:ring-1 focus:ring-white/30 transition-colors"
+                    className="w-full h-10 pl-9 pr-8 rounded-full border border-white/25 bg-white/15 text-white placeholder-white/60 text-sm outline-none focus:bg-white/25 focus:border-white/40 focus:ring-1 focus:ring-white/30 transition-colors"
                     aria-label="Buscar productos"
                   />
                   {busqueda && (
