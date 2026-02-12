@@ -1,36 +1,48 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { db } from "./firebase/config"; 
+import Image from "next/image";
+import { getDb } from "./firebase/config";
 import { collection, getDocs } from "firebase/firestore";
 import confetti from "canvas-confetti";
+import type { Product, CartItem } from "./types";
+
+const NUMERO_WHATSAPP = "5493515416836";
+const categorias = ["Todos", "Mates", "Termos", "Bombillas", "Yerberas", "Set Materos", "Despolvillador"];
 
 export default function Home() {
-  // --- ESTADOS DE DATOS ---
-  const [productos, setProductos] = useState<any[]>([]);
+  const [productos, setProductos] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorFirebase, setErrorFirebase] = useState<string | null>(null);
 
-  // --- TUS ESTADOS ORIGINALES ---
-  const [carrito, setCarrito] = useState<any[]>([]);
+  const [carrito, setCarrito] = useState<CartItem[]>([]);
   const [mostrarResumen, setMostrarResumen] = useState(false);
   const [busqueda, setBusqueda] = useState("");
   const [categoriaSeleccionada, setCategoriaSeleccionada] = useState("Todos");
   const [mostrarCategorias, setMostrarCategorias] = useState(false);
   const [verTienda, setVerTienda] = useState(false);
+  const [menuMovilAbierto, setMenuMovilAbierto] = useState(false);
+  const [faqAbierto, setFaqAbierto] = useState<number | null>(null);
 
-  const categorias = ["Todos", "Mates", "Termos", "Bombillas", "Yerberas", "Set Materos", "Despolvillador"];
-
-  // --- EFECTO PARA TRAER PRODUCTOS DE FIREBASE ---
   useEffect(() => {
     const fetchProductos = async () => {
       try {
-        const querySnapshot = await getDocs(collection(db, "productos"));
-        const docs = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
+        setErrorFirebase(null);
+        const querySnapshot = await getDocs(collection(getDb(), "productos"));
+        const docs: Product[] = querySnapshot.docs.map((doc) => {
+          const d = doc.data();
+          return {
+            id: doc.id,
+            name: d.name ?? "",
+            description: d.description,
+            price: Number(d.price) ?? 0,
+            image: d.image ?? "",
+            category: d.category,
+          };
+        });
         setProductos(docs);
       } catch (error) {
+        setErrorFirebase("No pudimos cargar los productos. Revisá tu conexión e intentá de nuevo.");
         console.error("Error trayendo productos de Firebase:", error);
       } finally {
         setLoading(false);
@@ -39,39 +51,75 @@ export default function Home() {
     fetchProductos();
   }, []);
 
-  // --- LÓGICA DE FILTRADO (Ahora usa 'productos' de la nube) ---
-  const productosFiltrados = productos.filter(p => {
-    const name = p.name?.toLowerCase() || "";
-    const desc = p.description?.toLowerCase() || "";
-    const coincideBusqueda = name.includes(busqueda.toLowerCase()) || 
-                             desc.includes(busqueda.toLowerCase());
-    const coincideCategoria = categoriaSeleccionada === "Todos" || p.category === categoriaSeleccionada;
+  const productosFiltrados = productos.filter((p) => {
+    const name = p.name?.toLowerCase() ?? "";
+    const desc = (p.description ?? "").toLowerCase();
+    const coincideBusqueda =
+      name.includes(busqueda.toLowerCase()) || desc.includes(busqueda.toLowerCase());
+    const coincideCategoria =
+      categoriaSeleccionada === "Todos" || p.category === categoriaSeleccionada;
     return coincideBusqueda && coincideCategoria;
   });
 
   const productosDestacados = productos.slice(0, 3);
 
-  // --- TUS FUNCIONES ORIGINALES ---
-  const agregarAlCarrito = (producto: any) => {
-    setCarrito([...carrito, producto]);
+  const agregarAlCarrito = (producto: Product) => {
+    setCarrito((prev) => {
+      const existe = prev.find((i) => i.product.id === producto.id);
+      if (existe) {
+        return prev.map((i) =>
+          i.product.id === producto.id ? { ...i, quantity: i.quantity + 1 } : i
+        );
+      }
+      return [...prev, { product: producto, quantity: 1 }];
+    });
     confetti({
-      particleCount: 60, spread: 70, origin: { x: 0.5, y: 0.7 },
-      colors: ['#4a5d23', '#8b4513', '#fdfcf0'], zIndex: 9999
+      particleCount: 60,
+      spread: 70,
+      origin: { x: 0.5, y: 0.7 },
+      colors: ["#4a5d23", "#8b4513", "#fdfcf0"],
+      zIndex: 9999,
     });
   };
 
-  const eliminarDelCarrito = (indexAEliminar: number) => {
-    setCarrito(carrito.filter((_, index) => index !== indexAEliminar));
+  const eliminarDelCarrito = (productId: string) => {
+    setCarrito((prev) => prev.filter((i) => i.product.id !== productId));
   };
 
-  const totalPrecio = carrito.reduce((acc, item) => acc + (item.price || 0), 0);
+  const cambiarCantidad = (productId: string, delta: number) => {
+    setCarrito((prev) =>
+      prev
+        .map((i) =>
+          i.product.id === productId
+            ? { ...i, quantity: Math.max(0, i.quantity + delta) }
+            : i
+        )
+        .filter((i) => i.quantity > 0)
+    );
+  };
+
+  const totalPrecio = carrito.reduce(
+    (acc, item) => acc + item.product.price * item.quantity,
+    0
+  );
+  const totalItems = carrito.reduce((acc, item) => acc + item.quantity, 0);
 
   const finalizarPedido = () => {
     if (carrito.length === 0) return;
-    const numeroTelefono = "5493515416836"; 
-    const listaProductos = carrito.map(item => `- ${item.name} ($${item.price})`).join("%0A");
+    const listaProductos = carrito
+      .map(
+        (item) =>
+          `- ${item.product.name} x${item.quantity} ($${item.product.price * item.quantity})`
+      )
+      .join("%0A");
     const mensaje = `¡Hola! Quiero realizar un pedido en *Nómade Mates*:%0A%0A${listaProductos}%0A%0A*Total: $${totalPrecio}*%0A%0A¿Cómo coordinamos el pago?`;
-    window.open(`https://wa.me/${numeroTelefono}?text=${mensaje}`, "_blank");
+    window.open(`https://wa.me/${NUMERO_WHATSAPP}?text=${mensaje}`, "_blank");
+  };
+
+  const abrirWhatsAppGrabados = () => {
+    const mensaje =
+      "¡Hola! Me interesa consultar por *grabados láser* (nombres, logos) en productos de Nómade Mates.";
+    window.open(`https://wa.me/${NUMERO_WHATSAPP}?text=${encodeURIComponent(mensaje)}`, "_blank");
   };
 
   return (
@@ -81,26 +129,43 @@ export default function Home() {
       <nav className="bg-[#4a5d23] text-white p-4 shadow-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-4">
           <div className="flex items-center gap-4">
-            <button onClick={() => setVerTienda(false)} className="text-xl md:text-2xl font-bold font-serif whitespace-nowrap">🍂 Nómade Mates</button>
+            <button
+              onClick={() => { setVerTienda(false); setMenuMovilAbierto(false); }}
+              className="text-xl md:text-2xl font-bold font-serif whitespace-nowrap"
+            >
+              🍂 Nómade Mates
+            </button>
+            <button
+              type="button"
+              className="md:hidden p-2 rounded-lg hover:bg-white/10"
+              onClick={() => setMenuMovilAbierto(!menuMovilAbierto)}
+              aria-expanded={menuMovilAbierto}
+              aria-label={menuMovilAbierto ? "Cerrar menú" : "Abrir menú"}
+            >
+              {menuMovilAbierto ? (
+                <span className="text-xl">✕</span>
+              ) : (
+                <span className="text-xl">☰</span>
+              )}
+            </button>
           </div>
 
           <div className="hidden md:flex gap-6 text-xs uppercase tracking-widest font-medium">
             <button onClick={() => setVerTienda(false)} className="hover:text-amber-200 uppercase transition-colors">Inicio</button>
             <a href="#nosotros" onClick={() => setVerTienda(false)} className="hover:text-amber-200 transition-colors uppercase">Nosotros</a>
-            
             <div className="relative">
-              <button 
+              <button
                 onClick={() => setMostrarCategorias(!mostrarCategorias)}
                 className="hover:text-amber-200 transition-colors flex items-center gap-1 uppercase tracking-widest outline-none"
               >
-                Productos {mostrarCategorias ? '▴' : '▾'}
+                Productos {mostrarCategorias ? "▴" : "▾"}
               </button>
               {mostrarCategorias && (
                 <div className="absolute top-full left-0 mt-2 w-48 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50 text-gray-800 normal-case tracking-normal font-sans">
                   {categorias.map((cat) => (
                     <button
                       key={cat}
-                      className={`w-full text-left px-5 py-3 text-sm hover:bg-amber-50 transition-colors ${categoriaSeleccionada === cat ? 'bg-amber-100 font-bold text-[#4a5d23]' : ''}`}
+                      className={`w-full text-left px-5 py-3 text-sm hover:bg-amber-50 transition-colors ${categoriaSeleccionada === cat ? "bg-amber-100 font-bold text-[#4a5d23]" : ""}`}
                       onClick={() => {
                         setCategoriaSeleccionada(cat);
                         setVerTienda(true);
@@ -116,10 +181,42 @@ export default function Home() {
             <a href="#contacto" className="hover:text-amber-200 transition-colors">Contacto</a>
           </div>
 
-          <button onClick={() => setMostrarResumen(!mostrarResumen)} className="bg-white text-[#4a5d23] px-4 py-2 rounded-full font-bold shadow-md text-sm active:scale-95 transition-all">
-            🛒 Tu Carrito ({carrito.length})
+          <button
+            onClick={() => setMostrarResumen(!mostrarResumen)}
+            className="bg-white text-[#4a5d23] px-4 py-2 rounded-full font-bold shadow-md text-sm active:scale-95 transition-all"
+            aria-label={`Tu carrito tiene ${totalItems} producto(s)`}
+          >
+            🛒 Tu Carrito ({totalItems})
           </button>
         </div>
+
+        {/* Menú móvil */}
+        {menuMovilAbierto && (
+          <div className="md:hidden mt-4 pt-4 border-t border-white/20 flex flex-col gap-2 text-sm uppercase tracking-widest">
+            <button onClick={() => { setVerTienda(false); setMenuMovilAbierto(false); }} className="text-left py-2 hover:text-amber-200">Inicio</button>
+            <a href="#nosotros" onClick={() => setMenuMovilAbierto(false)} className="py-2 hover:text-amber-200">Nosotros</a>
+            <button onClick={() => { setVerTienda(true); setCategoriaSeleccionada("Todos"); setMenuMovilAbierto(false); }} className="text-left py-2 hover:text-amber-200">Ver catálogo</button>
+            <a href="#contacto" onClick={() => setMenuMovilAbierto(false)} className="py-2 hover:text-amber-200">Contacto</a>
+            <div className="pt-2 border-t border-white/20">
+              <p className="text-xs normal-case opacity-80 mb-2">Productos por categoría</p>
+              <div className="flex flex-wrap gap-2">
+                {categorias.filter((c) => c !== "Todos").map((cat) => (
+                  <button
+                    key={cat}
+                    className="px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-xs"
+                    onClick={() => {
+                      setCategoriaSeleccionada(cat);
+                      setVerTienda(true);
+                      setMenuMovilAbierto(false);
+                    }}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* Carrito flotante */}
@@ -127,29 +224,69 @@ export default function Home() {
         <div className="fixed inset-x-4 top-20 md:left-auto md:right-6 md:w-80 bg-white shadow-2xl rounded-2xl p-6 z-[60] border border-gray-100 animate-in fade-in slide-in-from-top-4 duration-300">
           <div className="flex justify-between items-center mb-4 border-b pb-2 font-bold text-lg">
             <span>Tu Pedido</span>
-            <button onClick={() => setMostrarResumen(false)} className="text-gray-400">✕</button>
+            <button onClick={() => setMostrarResumen(false)} className="text-gray-400 p-1" aria-label="Cerrar carrito">✕</button>
           </div>
-          <div className="max-h-60 overflow-y-auto mb-4 space-y-2">
-            {carrito.map((item, index) => (
-              <div key={index} className="flex justify-between items-center text-sm border-b pb-2">
-                <span>{item.name}</span>
-                <div className="flex items-center gap-2">
-                  <span className="font-bold">${(item.price || 0).toLocaleString('es-AR')}</span>
-                  <button onClick={() => eliminarDelCarrito(index)} className="p-1 hover:bg-gray-100 rounded">🗑️</button>
+          <div className="max-h-60 overflow-y-auto mb-4 space-y-3">
+            {carrito.length === 0 ? (
+              <p className="text-gray-500 text-sm py-4 text-center">Tu carrito está vacío</p>
+            ) : (
+              carrito.map((item) => (
+                <div key={item.product.id} className="flex justify-between items-start text-sm border-b pb-2 gap-2">
+                  <div className="min-w-0 flex-1">
+                    <span className="font-medium block">{item.product.name}</span>
+                    <div className="flex items-center gap-2 mt-1">
+                      <button
+                        type="button"
+                        className="w-7 h-7 rounded border border-gray-200 flex items-center justify-center hover:bg-gray-100 font-bold"
+                        onClick={() => cambiarCantidad(item.product.id, -1)}
+                        aria-label="Restar uno"
+                      >
+                        −
+                      </button>
+                      <span className="font-bold w-6 text-center">{item.quantity}</span>
+                      <button
+                        type="button"
+                        className="w-7 h-7 rounded border border-gray-200 flex items-center justify-center hover:bg-gray-100 font-bold"
+                        onClick={() => cambiarCantidad(item.product.id, 1)}
+                        aria-label="Sumar uno"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span className="font-bold">${(item.product.price * item.quantity).toLocaleString("es-AR")}</span>
+                    <button onClick={() => eliminarDelCarrito(item.product.id)} className="p-1 hover:bg-gray-100 rounded" aria-label="Quitar del carrito">🗑️</button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
-          <div className="text-xl font-black text-[#4a5d23] mb-4">TOTAL: ${totalPrecio.toLocaleString('es-AR')}</div>
-          <button onClick={finalizarPedido} className="w-full bg-[#4a5d23] text-white py-4 rounded-xl font-bold hover:bg-[#3a4a1c] transition-colors">Enviar WhatsApp</button>
+          {carrito.length > 0 && (
+            <>
+              <div className="text-xl font-black text-[#4a5d23] mb-4">TOTAL: ${totalPrecio.toLocaleString("es-AR")}</div>
+              <button onClick={finalizarPedido} className="w-full bg-[#4a5d23] text-white py-4 rounded-xl font-bold hover:bg-[#3a4a1c] transition-colors">Enviar WhatsApp</button>
+            </>
+          )}
         </div>
       )}
 
       {/* --- CONTENIDO --- */}
       {loading ? (
         <div className="flex flex-col items-center justify-center h-96">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#4a5d23]"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#4a5d23]" aria-hidden></div>
           <p className="mt-4 text-gray-500 italic">Cargando mates desde la nube...</p>
+        </div>
+      ) : errorFirebase ? (
+        <div className="flex flex-col items-center justify-center min-h-[20rem] px-6 text-center">
+          <p className="text-red-600 font-medium mb-2">{errorFirebase}</p>
+          <button
+            type="button"
+            onClick={() => { setLoading(true); setErrorFirebase(null); window.location.reload(); }}
+            className="bg-[#4a5d23] text-white px-6 py-3 rounded-xl font-bold hover:bg-[#3a4a1c] transition-colors"
+          >
+            Reintentar
+          </button>
         </div>
       ) : !verTienda ? (
         <>
@@ -161,7 +298,7 @@ export default function Home() {
           <section className="bg-amber-50 py-12 text-center border-y border-amber-100">
             <h3 className="text-2xl font-bold mb-2">✨ Personalizá tu producto</h3>
             <p className="text-gray-600 px-4">Grabados láser, nombres y logos. ¡Hacé que tu mate sea único!</p>
-            <button className="mt-4 bg-[#8b4513] text-white px-8 py-3 rounded-full font-bold hover:scale-105 transition-transform shadow-md">
+            <button onClick={abrirWhatsAppGrabados} className="mt-4 bg-[#8b4513] text-white px-8 py-3 rounded-full font-bold hover:scale-105 transition-transform shadow-md">
               Consultar por grabados
             </button>
           </section>
@@ -171,9 +308,11 @@ export default function Home() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               {productosDestacados.map((producto) => (
                 <div key={producto.id} className="bg-white rounded-3xl overflow-hidden shadow-lg border border-gray-100 p-4 hover:shadow-2xl transition-all">
-                  <img src={producto.image} className="h-48 w-full object-cover rounded-2xl mb-4" />
+                  <div className="relative h-48 w-full rounded-2xl mb-4 overflow-hidden bg-gray-100">
+                    <Image src={producto.image} alt={producto.name} fill className="object-cover" sizes="(max-width:768px) 100vw, 33vw" unoptimized />
+                  </div>
                   <h4 className="text-xl font-bold">{producto.name}</h4>
-                  <p className="text-2xl font-black text-[#4a5d23] my-4">${(producto.price || 0).toLocaleString('es-AR')}</p>
+                  <p className="text-2xl font-black text-[#4a5d23] my-4">${(producto.price ?? 0).toLocaleString("es-AR")}</p>
                   <button onClick={() => agregarAlCarrito(producto)} className="w-full bg-[#4a5d23] text-white py-2 rounded-xl font-bold active:scale-95 transition-all">Agregar al Carrito</button>
                 </div>
               ))}
@@ -216,14 +355,14 @@ export default function Home() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-20">
             {productosFiltrados.map((producto) => (
               <div key={producto.id} className="bg-white rounded-3xl overflow-hidden shadow-lg border border-gray-100 flex flex-col hover:shadow-2xl transition-all">
-                <div className="h-64 bg-gray-50 flex items-center justify-center overflow-hidden">
-                  <img src={producto.image} alt={producto.name} className="w-full h-full object-cover" />
+                <div className="relative h-64 bg-gray-50 overflow-hidden">
+                  <Image src={producto.image} alt={producto.name} fill className="object-cover" sizes="(max-width:768px) 100vw, 33vw" unoptimized />
                 </div>
                 <div className="p-6 text-center flex-grow flex flex-col justify-between">
                   <div>
                     <h4 className="text-xl font-bold mb-2">{producto.name}</h4>
                     <p className="text-gray-500 text-sm mb-4">{producto.description}</p>
-                    <p className="text-3xl font-black text-[#4a5d23] mb-6">${(producto.price || 0).toLocaleString('es-AR')}</p>
+                    <p className="text-3xl font-black text-[#4a5d23] mb-6">${(producto.price ?? 0).toLocaleString("es-AR")}</p>
                   </div>
                   <button onClick={() => agregarAlCarrito(producto)} className="w-full bg-[#4a5d23] text-white py-3 rounded-2xl font-bold shadow-md active:scale-95 transition-all">Agregar al Carrito</button>
                 </div>
@@ -245,18 +384,31 @@ export default function Home() {
         </section>
       )}
 
-      {/* PREGUNTAS FRECUENTES */}
-      <section className="max-w-4xl mx-auto py-20 px-6">
+      {/* PREGUNTAS FRECUENTES - Acordeón */}
+      <section className="max-w-4xl mx-auto py-20 px-6" aria-label="Preguntas frecuentes">
         <h3 className="text-3xl font-bold text-center mb-12">Preguntas Frecuentes</h3>
-        <div className="space-y-6">
-          <div className="border-b pb-4">
-            <h4 className="font-bold text-lg mb-2">¿Cómo comprar?</h4>
-            <p className="text-gray-600 text-sm">Elegí tus productos, agregalos al carrito y finalizá el pedido por WhatsApp.</p>
-          </div>
-          <div className="border-b pb-4">
-            <h4 className="font-bold text-lg mb-2">Envíos</h4>
-            <p className="text-gray-600 text-sm">Hacemos envíos a todo el país a través de Correo Argentino.</p>
-          </div>
+        <div className="space-y-2">
+          {[
+            { id: 0, pregunta: "¿Cómo comprar?", respuesta: "Elegí tus productos, agregalos al carrito y finalizá el pedido por WhatsApp." },
+            { id: 1, pregunta: "Envíos", respuesta: "Hacemos envíos a todo el país a través de Correo Argentino." },
+          ].map((faq) => (
+            <div key={faq.id} className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+              <button
+                type="button"
+                className="w-full text-left px-5 py-4 font-bold text-lg flex justify-between items-center hover:bg-gray-50 transition-colors"
+                onClick={() => setFaqAbierto(faqAbierto === faq.id ? null : faq.id)}
+                aria-expanded={faqAbierto === faq.id}
+              >
+                {faq.pregunta}
+                <span className="text-[#4a5d23] text-xl">{faqAbierto === faq.id ? "−" : "+"}</span>
+              </button>
+              {faqAbierto === faq.id && (
+                <div className="px-5 pb-4 text-gray-600 text-sm border-t border-gray-100 pt-2">
+                  {faq.respuesta}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       </section>
 

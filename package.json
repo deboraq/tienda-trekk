@@ -3,9 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 127.0.0.1",
+    "dev:webpack": "next dev --hostname 127.0.0.1 --webpack",
     "build": "next build",
-    "start": "next start",
+    "start": "next start --hostname 127.0.0.1",
+    "start:3002": "next start --hostname 127.0.0.1 -p 3002",
     "lint": "eslint"
   },
   "dependencies": {
