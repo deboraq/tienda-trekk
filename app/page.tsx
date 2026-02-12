@@ -23,6 +23,8 @@ export default function Home() {
   const [verTienda, setVerTienda] = useState(false);
   const [menuMovilAbierto, setMenuMovilAbierto] = useState(false);
   const [faqAbierto, setFaqAbierto] = useState<number | null>(null);
+  const [imagenAmpliada, setImagenAmpliada] = useState<{ src: string; alt: string } | null>(null);
+  const [mostrarFaqModal, setMostrarFaqModal] = useState(false);
 
   useEffect(() => {
     const fetchProductos = async () => {
@@ -271,6 +273,40 @@ export default function Home() {
         </div>
       )}
 
+      {/* Lightbox: foto ampliada */}
+      {imagenAmpliada && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/85 p-4"
+          onClick={() => setImagenAmpliada(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Imagen ampliada"
+          style={{ position: "fixed" }}
+        >
+          <button
+            type="button"
+            className="absolute top-4 right-4 z-[210] w-12 h-12 rounded-full bg-white text-gray-800 flex items-center justify-center text-xl hover:bg-gray-100 transition-colors shadow-lg"
+            onClick={(e) => { e.stopPropagation(); setImagenAmpliada(null); }}
+            aria-label="Cerrar imagen"
+          >
+            ✕
+          </button>
+          <div
+            className="relative max-w-4xl w-full max-h-[90vh] flex items-center justify-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imagenAmpliada.src}
+              alt={imagenAmpliada.alt}
+              className="max-w-full max-h-[90vh] w-auto object-contain rounded-lg shadow-2xl"
+              draggable={false}
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
+
       {/* --- CONTENIDO --- */}
       {loading ? (
         <div className="flex flex-col items-center justify-center h-96">
@@ -308,8 +344,16 @@ export default function Home() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               {productosDestacados.map((producto) => (
                 <div key={producto.id} className="bg-white rounded-3xl overflow-hidden shadow-lg border border-gray-100 p-4 hover:shadow-2xl transition-all">
-                  <div className="relative h-48 w-full rounded-2xl mb-4 overflow-hidden bg-gray-100">
-                    <Image src={producto.image} alt={producto.name} fill className="object-cover" sizes="(max-width:768px) 100vw, 33vw" unoptimized />
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    className="relative h-48 w-full rounded-2xl mb-4 overflow-hidden bg-gray-100 block w-full cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-[#4a5d23] focus:ring-offset-2"
+                    onClick={() => producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name })}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name }); } }}
+                    aria-label={`Ver foto ampliada de ${producto.name}`}
+                  >
+                    <Image src={producto.image} alt={producto.name} fill className="object-cover pointer-events-none" sizes="(max-width:768px) 100vw, 33vw" unoptimized />
+                    <span className="absolute inset-0 flex items-end justify-center pb-2 text-white text-sm font-medium bg-gradient-to-t from-black/50 to-transparent opacity-0 hover:opacity-100 transition-opacity">Ver más grande</span>
                   </div>
                   <h4 className="text-xl font-bold">{producto.name}</h4>
                   <p className="text-2xl font-black text-[#4a5d23] my-4">${(producto.price ?? 0).toLocaleString("es-AR")}</p>
@@ -355,8 +399,16 @@ export default function Home() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-20">
             {productosFiltrados.map((producto) => (
               <div key={producto.id} className="bg-white rounded-3xl overflow-hidden shadow-lg border border-gray-100 flex flex-col hover:shadow-2xl transition-all">
-                <div className="relative h-64 bg-gray-50 overflow-hidden">
-                  <Image src={producto.image} alt={producto.name} fill className="object-cover" sizes="(max-width:768px) 100vw, 33vw" unoptimized />
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className="relative h-64 bg-gray-50 overflow-hidden block w-full cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-[#4a5d23] focus:ring-offset-2"
+                  onClick={() => producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name })}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name }); } }}
+                  aria-label={`Ver foto ampliada de ${producto.name}`}
+                >
+                  <Image src={producto.image} alt={producto.name} fill className="object-cover pointer-events-none" sizes="(max-width:768px) 100vw, 33vw" unoptimized />
+                  <span className="absolute inset-0 flex items-end justify-center pb-2 text-white text-sm font-medium bg-gradient-to-t from-black/50 to-transparent opacity-0 hover:opacity-100 transition-opacity">Ver más grande</span>
                 </div>
                 <div className="p-6 text-center flex-grow flex flex-col justify-between">
                   <div>
@@ -384,33 +436,77 @@ export default function Home() {
         </section>
       )}
 
-      {/* PREGUNTAS FRECUENTES - Acordeón */}
-      <section className="max-w-4xl mx-auto py-20 px-6" aria-label="Preguntas frecuentes">
-        <h3 className="text-3xl font-bold text-center mb-12">Preguntas Frecuentes</h3>
-        <div className="space-y-2">
-          {[
-            { id: 0, pregunta: "¿Cómo comprar?", respuesta: "Elegí tus productos, agregalos al carrito y finalizá el pedido por WhatsApp." },
-            { id: 1, pregunta: "Envíos", respuesta: "Hacemos envíos a todo el país a través de Correo Argentino." },
-          ].map((faq) => (
-            <div key={faq.id} className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+      {/* Botón para abrir Preguntas Frecuentes en ventana aparte */}
+      <section className="max-w-4xl mx-auto py-12 px-6 text-center">
+        <button
+          type="button"
+          onClick={() => setMostrarFaqModal(true)}
+          className="bg-amber-100 hover:bg-amber-200 text-[#4a5d23] font-bold text-lg px-6 py-3 rounded-xl border-2 border-[#4a5d23]/30 focus:outline-none focus:ring-2 focus:ring-[#4a5d23] focus:ring-offset-2 transition-colors"
+        >
+          ❓ Preguntas Frecuentes
+        </button>
+      </section>
+
+      {/* Modal Preguntas Frecuentes */}
+      {mostrarFaqModal && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setMostrarFaqModal(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="faq-modal-title"
+          style={{ position: "fixed" }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col z-[210]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center p-6 border-b border-gray-100">
+              <h3 id="faq-modal-title" className="text-2xl font-bold text-gray-800">Preguntas Frecuentes</h3>
               <button
                 type="button"
-                className="w-full text-left px-5 py-4 font-bold text-lg flex justify-between items-center hover:bg-gray-50 transition-colors"
-                onClick={() => setFaqAbierto(faqAbierto === faq.id ? null : faq.id)}
-                aria-expanded={faqAbierto === faq.id}
+                className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-600 shrink-0"
+                onClick={(e) => { e.stopPropagation(); setMostrarFaqModal(false); }}
+                aria-label="Cerrar"
               >
-                {faq.pregunta}
-                <span className="text-[#4a5d23] text-xl">{faqAbierto === faq.id ? "−" : "+"}</span>
+                ✕
               </button>
-              {faqAbierto === faq.id && (
-                <div className="px-5 pb-4 text-gray-600 text-sm border-t border-gray-100 pt-2">
-                  {faq.respuesta}
-                </div>
-              )}
             </div>
-          ))}
+            <div className="p-6 overflow-y-auto space-y-2">
+              {[
+                { id: 0, pregunta: "¿Cómo comprar?", respuesta: "Elegí tus productos, agregalos al carrito y finalizá el pedido por WhatsApp." },
+                { id: 1, pregunta: "Envíos", respuesta: "Hacemos envíos a todo el país a través de Correo Argentino." },
+              ].map((faq) => (
+                <div key={faq.id} className="border border-gray-200 rounded-xl overflow-hidden bg-gray-50">
+                  <button
+                    type="button"
+                    className="w-full text-left px-5 py-4 font-bold text-lg flex justify-between items-center hover:bg-gray-100 transition-colors"
+                    onClick={() => setFaqAbierto(faqAbierto === faq.id ? null : faq.id)}
+                    aria-expanded={faqAbierto === faq.id}
+                  >
+                    {faq.pregunta}
+                    <span className="text-[#4a5d23] text-xl">{faqAbierto === faq.id ? "−" : "+"}</span>
+                  </button>
+                  {faqAbierto === faq.id && (
+                    <div className="px-5 pb-4 text-gray-600 text-sm border-t border-gray-200 pt-2">
+                      {faq.respuesta}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setMostrarFaqModal(false)}
+                className="w-full bg-[#4a5d23] text-white py-3 rounded-xl font-bold hover:bg-[#3a4a1c] transition-colors"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
         </div>
-      </section>
+      )}
 
       {/* FOOTER */}
       <footer id="contacto" className="bg-white border-t border-gray-100 py-16 px-6">
