@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { getDb } from "./firebase/config";
 import { collection, getDocs } from "firebase/firestore";
@@ -25,6 +25,7 @@ export default function Home() {
   const [faqAbierto, setFaqAbierto] = useState<number | null>(null);
   const [imagenAmpliada, setImagenAmpliada] = useState<{ src: string; alt: string } | null>(null);
   const [mostrarFaqModal, setMostrarFaqModal] = useState(false);
+  const inputBusquedaCatalogRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const fetchProductos = async () => {
@@ -52,6 +53,14 @@ export default function Home() {
     };
     fetchProductos();
   }, []);
+
+  // Al pasar al catálogo escribiendo en el buscador, enfocar el input del catálogo para seguir escribiendo sin clic
+  useEffect(() => {
+    if (verTienda && busqueda.trim()) {
+      const t = setTimeout(() => inputBusquedaCatalogRef.current?.focus(), 0);
+      return () => clearTimeout(t);
+    }
+  }, [verTienda]);
 
   const productosFiltrados = productos.filter((p) => {
     const name = p.name?.toLowerCase() ?? "";
@@ -129,9 +138,9 @@ export default function Home() {
       
       {/* --- NAVBAR --- */}
       <nav className="bg-[#4a5d23] text-white p-4 shadow-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-4">
+        <div className="max-w-7xl mx-auto relative flex flex-wrap items-center justify-between gap-4 min-h-[3rem]">
           {/* Logo (izquierda) */}
-          <div className="flex items-center gap-4 shrink-0">
+          <div className="flex items-center gap-4 shrink-0 z-10">
             <button
               onClick={() => { setVerTienda(false); setMenuMovilAbierto(false); }}
               className="text-xl md:text-2xl font-bold font-serif whitespace-nowrap"
@@ -149,8 +158,8 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Enlaces al centro (solo escritorio) */}
-          <div className="hidden md:flex flex-1 justify-center">
+          {/* Enlaces al centro (solo escritorio) - centrado real en la pantalla */}
+          <div className="hidden md:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
             <div className="flex gap-6 text-xs uppercase tracking-widest font-medium">
               <button onClick={() => setVerTienda(false)} className="hover:text-amber-200 uppercase transition-colors">Inicio</button>
               <a href="#nosotros" onClick={() => setVerTienda(false)} className="hover:text-amber-200 transition-colors uppercase">Nosotros</a>
@@ -162,7 +171,7 @@ export default function Home() {
                   Productos {mostrarCategorias ? "▴" : "▾"}
                 </button>
                 {mostrarCategorias && (
-                  <div className="absolute top-full left-0 mt-2 w-48 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50 text-gray-800 normal-case tracking-normal font-sans">
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50 text-gray-800 normal-case tracking-normal font-sans">
                     {categorias.map((cat) => (
                       <button
                         key={cat}
@@ -183,8 +192,15 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Derecha: buscador (solo en pantalla principal) + carrito */}
-          <div className="flex items-center gap-3 ml-auto shrink-0">
+          {/* Derecha: carrito arriba, buscador abajo (solo en pantalla principal) */}
+          <div className="flex flex-col items-end gap-2 shrink-0 z-10">
+            <button
+              onClick={() => setMostrarResumen(!mostrarResumen)}
+              className="bg-white text-[#4a5d23] px-4 py-2 rounded-full font-bold shadow-md text-sm active:scale-95 transition-all w-fit"
+              aria-label={`Tu carrito tiene ${totalItems} producto(s)`}
+            >
+              🛒 Tu Carrito ({totalItems})
+            </button>
             {!verTienda && (
               <div className="hidden md:block w-48 lg:w-56">
                 <div className="relative">
@@ -206,13 +222,6 @@ export default function Home() {
                 </div>
               </div>
             )}
-            <button
-              onClick={() => setMostrarResumen(!mostrarResumen)}
-              className="bg-white text-[#4a5d23] px-4 py-2 rounded-full font-bold shadow-md text-sm active:scale-95 transition-all"
-              aria-label={`Tu carrito tiene ${totalItems} producto(s)`}
-            >
-              🛒 Tu Carrito ({totalItems})
-            </button>
           </div>
         </div>
 
@@ -430,6 +439,7 @@ export default function Home() {
             <div className="relative w-full md:w-80">
               <span className="absolute inset-y-0 left-3 flex items-center text-gray-400 pointer-events-none">🔍</span>
               <input
+                ref={inputBusquedaCatalogRef}
                 type="search"
                 value={busqueda}
                 onChange={(e) => setBusqueda(e.target.value)}
