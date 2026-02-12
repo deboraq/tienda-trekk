@@ -183,9 +183,36 @@ export default function Home() {
             <a href="#contacto" className="hover:text-amber-200 transition-colors">Contacto</a>
           </div>
 
+          <div className="hidden md:block flex-1 max-w-xs mx-4">
+            <div className="relative">
+              <span className="absolute inset-y-0 left-3 flex items-center text-gray-400 pointer-events-none">🔍</span>
+              <input
+                type="search"
+                value={busqueda}
+                onChange={(e) => {
+                  setBusqueda(e.target.value);
+                  if (e.target.value.trim()) setVerTienda(true);
+                }}
+                placeholder="Buscar productos..."
+                className="w-full pl-9 pr-4 py-2 rounded-full border-0 bg-white/95 text-gray-800 placeholder-gray-500 text-sm outline-none focus:ring-2 focus:ring-amber-300"
+                aria-label="Buscar productos"
+              />
+              {busqueda && (
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                  onClick={() => setBusqueda("")}
+                  aria-label="Borrar búsqueda"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
           <button
             onClick={() => setMostrarResumen(!mostrarResumen)}
-            className="bg-white text-[#4a5d23] px-4 py-2 rounded-full font-bold shadow-md text-sm active:scale-95 transition-all"
+            className="bg-white text-[#4a5d23] px-4 py-2 rounded-full font-bold shadow-md text-sm active:scale-95 transition-all shrink-0"
             aria-label={`Tu carrito tiene ${totalItems} producto(s)`}
           >
             🛒 Tu Carrito ({totalItems})
@@ -195,6 +222,23 @@ export default function Home() {
         {/* Menú móvil */}
         {menuMovilAbierto && (
           <div className="md:hidden mt-4 pt-4 border-t border-white/20 flex flex-col gap-2 text-sm uppercase tracking-widest">
+            <div className="relative mb-2">
+              <span className="absolute inset-y-0 left-3 flex items-center text-gray-400 pointer-events-none">🔍</span>
+              <input
+                type="search"
+                value={busqueda}
+                onChange={(e) => {
+                  setBusqueda(e.target.value);
+                  if (e.target.value.trim()) setVerTienda(true);
+                }}
+                placeholder="Buscar productos..."
+                className="w-full pl-9 pr-8 py-2.5 rounded-full border-0 bg-white/95 text-gray-800 placeholder-gray-500 text-sm normal-case"
+                aria-label="Buscar productos"
+              />
+              {busqueda && (
+                <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 p-1" onClick={() => setBusqueda("")} aria-label="Borrar">✕</button>
+              )}
+            </div>
             <button onClick={() => { setVerTienda(false); setMenuMovilAbierto(false); }} className="text-left py-2 hover:text-amber-200">Inicio</button>
             <a href="#nosotros" onClick={() => setMenuMovilAbierto(false)} className="py-2 hover:text-amber-200">Nosotros</a>
             <button onClick={() => { setVerTienda(true); setCategoriaSeleccionada("Todos"); setMenuMovilAbierto(false); }} className="text-left py-2 hover:text-amber-200">Ver catálogo</button>
