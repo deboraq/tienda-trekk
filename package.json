@@ -1,7 +1,10 @@
 {
-  "name": "tienda-mates",
+  "name": "tienda-trekk",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1",
     "dev:webpack": "next dev --hostname 127.0.0.1 --webpack",

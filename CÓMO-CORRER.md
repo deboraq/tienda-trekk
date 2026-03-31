@@ -15,7 +15,7 @@ Si dice que no hay proceso, está bien.
 ## 2. Entrar al proyecto y levantar el servidor
 
 ```bash
-cd /Users/deboraquinteros/Proyectos/tienda-mates
+cd /Users/deboraquinteros/Proyectos/tienda-trekk
 npm run build
 npm run start
 ```
@@ -40,7 +40,7 @@ Y abrí: **http://127.0.0.1:3002**
 
 ```bash
 kill $(lsof -t -i:3000) 2>/dev/null
-cd /Users/deboraquinteros/Proyectos/tienda-mates
+cd /Users/deboraquinteros/Proyectos/tienda-trekk
 npm run dev
 ```
 
