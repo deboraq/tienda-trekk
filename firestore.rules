@@ -1,0 +1,12 @@
+rules_version = '2';
+
+// Copiá este contenido en Firebase Console → Firestore Database → Reglas → Publicar.
+// Catálogo público: cualquiera puede leer productos; nadie escribe desde el cliente.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /productos/{productId} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}
