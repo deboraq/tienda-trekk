@@ -16,6 +16,7 @@ import {
   CATEGORIAS_DEFAULT_SIN_TODOS,
   TEXTO_LED_DEFAULT,
 } from "./lib/site-config";
+import { esCatalogAdminEmail } from "./lib/catalog-admin";
 
 const NUMERO_WHATSAPP = "5493515416836";
 
@@ -969,13 +970,15 @@ export default function Home() {
               Sangre Nómade Adventure
             </h4>
             <p className="text-sm text-gray-600">© 2026 - Córdoba, Argentina.</p>
-            <button
-              type="button"
-              onClick={() => setMostrarAdminCatalogo(true)}
-              className="rounded-md bg-transparent px-1 py-0.5 text-center font-heading text-[10px] font-semibold uppercase tracking-[0.15em] text-[#53634B]/80 transition-colors hover:text-[#2F3E46] md:text-left"
-            >
-              Administrar tienda
-            </button>
+            {(!usuarioTienda || esCatalogAdminEmail(usuarioTienda.email)) && (
+              <button
+                type="button"
+                onClick={() => setMostrarAdminCatalogo(true)}
+                className="rounded-md bg-transparent px-1 py-0.5 text-center font-heading text-[10px] font-semibold uppercase tracking-[0.15em] text-[#53634B]/80 transition-colors hover:text-[#2F3E46] md:text-left"
+              >
+                Administrar tienda
+              </button>
+            )}
           </div>
         </div>
       </footer>
