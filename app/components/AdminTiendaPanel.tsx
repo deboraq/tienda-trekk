@@ -28,6 +28,7 @@ import {
   CONFIG_SITE_DOC_ID,
   TEXTO_LED_DEFAULT,
 } from "../lib/site-config";
+import { CATALOG_ADMIN_EMAIL, esCatalogAdminEmail } from "../lib/catalog-admin";
 import type { Pedido, PedidoEstado, Product } from "../types";
 import { docDataAPedido, etiquetaEstadoPedido, PEDIDO_ESTADOS } from "../lib/pedidos";
 
@@ -205,7 +206,7 @@ export function AdminTiendaPanel({
   }, [open]);
 
   useEffect(() => {
-    if (open && user) {
+    if (open && user && esCatalogAdminEmail(user.email)) {
       setLedDraft(marqueeText ?? "");
       setCatsDraft(
         categoriasProducto.length ? [...categoriasProducto] : []
@@ -229,7 +230,7 @@ export function AdminTiendaPanel({
   }, [open, catalogoVista, categoriasProducto, categoria]);
 
   useEffect(() => {
-    if (open && user && tab === "pedidos") {
+    if (open && user && esCatalogAdminEmail(user.email) && tab === "pedidos") {
       void cargarPedidosAdmin();
     }
   }, [open, user, tab, cargarPedidosAdmin]);
@@ -602,6 +603,24 @@ export function AdminTiendaPanel({
                 {authLoading ? "Entrando…" : "Entrar"}
               </button>
             </form>
+          ) : !esCatalogAdminEmail(user.email) ? (
+            <div className="mx-auto max-w-sm space-y-5 rounded-2xl border border-[#2F3E46]/10 bg-white p-6 text-center shadow-sm">
+              <p className="font-heading text-xs font-bold uppercase tracking-wider text-[#A65D37]">
+                Sin permisos de administración
+              </p>
+              <p className="text-xs leading-relaxed text-[#2F3E46]/75">
+                Iniciaste sesión con <span className="font-medium">{user.email}</span>. Solo la cuenta{" "}
+                <code className="rounded bg-[#F2EBD3]/80 px-1 py-0.5 text-[10px]">{CATALOG_ADMIN_EMAIL}</code> puede
+                editar la tienda (coincide con las reglas de Firestore).
+              </p>
+              <button
+                type="button"
+                onClick={() => signOut(getFirebaseAuth())}
+                className="w-full rounded-xl border-2 border-[#2F3E46]/20 py-3 font-heading text-xs font-bold uppercase tracking-wide text-[#2F3E46] transition-colors hover:bg-[#2F3E46]/5"
+              >
+                Cerrar sesión
+              </button>
+            </div>
           ) : (
             <>
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-[#2F3E46]/10 pb-4">
