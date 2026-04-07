@@ -196,7 +196,11 @@ export default function Home() {
         (item) =>
           `- ${item.product.name} x${item.quantity} ($${item.product.price * item.quantity})`
       )
-      .join("%0A");
+      .join("\n");
+
+    // Abrir pestaña en el mismo instante del clic. Si primero hacemos await (Firestore),
+    // el navegador bloquea window.open y no se abre WhatsApp.
+    const pestañaWa = window.open("about:blank", "_blank");
 
     setAvisoCheckout(null);
     let refPedido = "";
@@ -224,14 +228,18 @@ export default function Home() {
       }
     }
 
-    const bloqueRef = refPedido
-      ? `%0A%0A*Referencia web (seguimiento en Mi cuenta):*%0A${refPedido}`
+    const refBloque = refPedido
+      ? `\n\n*Referencia web (seguimiento en Mi cuenta):*\n${refPedido}`
       : "";
-    const mensaje = `¡Hola! Quiero realizar un pedido en *Sangre Nómade Adventure*:%0A%0A${listaProductos}%0A%0A*Total: $${totalPrecio}*%0A${bloqueRef}%0A%0A¿Cómo coordinamos el pago?`;
-    const urlWa = `https://wa.me/${NUMERO_WHATSAPP}?text=${mensaje}`;
-    requestAnimationFrame(() => {
-      window.open(urlWa, "_blank", "noopener,noreferrer");
-    });
+    const mensaje =
+      `¡Hola! Quiero realizar un pedido en *Sangre Nómade Adventure*:\n\n${listaProductos}\n\n*Total: $${totalPrecio}*${refBloque}\n\n¿Cómo coordinamos el pago?`;
+    const urlWa = `https://wa.me/${NUMERO_WHATSAPP}?text=${encodeURIComponent(mensaje)}`;
+
+    if (pestañaWa) {
+      pestañaWa.location.href = urlWa;
+    } else {
+      window.location.href = urlWa;
+    }
   };
 
   const abrirWhatsAppAsesoramiento = () => {
