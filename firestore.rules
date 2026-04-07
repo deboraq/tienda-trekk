@@ -1,17 +1,41 @@
 rules_version = '2';
 
-// Reemplazá "tu-correo-admin@gmail.com" por el email de tu usuario en Firebase Authentication
-// (mismo valor que en storage.rules). Luego publicá reglas en la consola o con Firebase CLI.
+// Email del usuario admin (Authentication) — tiene que coincidir EXACTO con el que usás al entrar.
+// Para otro correo, cambiá esta línea y volvé a publicar reglas (Firebase Console o firebase deploy).
 service cloud.firestore {
   match /databases/{database}/documents {
     function isCatalogAdmin() {
       return request.auth != null
-        && request.auth.token.email == "tu-correo-admin@gmail.com";
+        && request.auth.token.email == "debocab2@gmail.com";
+    }
+
+    match /config/{docId} {
+      allow read: if true;
+      allow create, update, delete: if isCatalogAdmin();
     }
 
     match /productos/{productId} {
       allow read: if true;
       allow create: if isCatalogAdmin();
+      allow update, delete: if isCatalogAdmin();
+    }
+
+    // Pedidos web: el cliente crea el suyo (estado inicial fijo); solo el admin actualiza.
+    match /pedidos/{pedidoId} {
+      allow read: if request.auth != null && (
+        resource.data.userId == request.auth.uid || isCatalogAdmin()
+      );
+      // userId es la fuente de verdad; userEmail es solo informativo (evita fallos por casing / token).
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.userEmail is string
+        && request.resource.data.userEmail.size() <= 320
+        && request.resource.data.status == 'recibido'
+        && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
+        && request.resource.data.items.size() <= 50
+        && request.resource.data.total is number
+        && request.resource.data.total >= 0;
       allow update, delete: if isCatalogAdmin();
     }
   }

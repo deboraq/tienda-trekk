@@ -57,10 +57,11 @@ body {
   will-change: transform;
 }
 
+/* LED cálido: crema / terracota suave (alineado a la paleta Sangre Nómade) */
 .sn-marquee-led-text span {
   text-shadow:
-    0 0 6px rgba(167, 243, 208, 0.55),
-    0 0 14px rgba(52, 211, 153, 0.35);
+    0 0 10px rgba(232, 201, 168, 0.45),
+    0 0 22px rgba(166, 93, 55, 0.2);
 }
 
 @media (prefers-reduced-motion: reduce) {

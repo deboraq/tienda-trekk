@@ -2,17 +2,22 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
-import { getDb } from "./firebase/config";
+import { getDb, getFirebaseAuth } from "./firebase/config";
 import { collection, getDocs } from "firebase/firestore";
+import { onAuthStateChanged, type User } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
 import confetti from "canvas-confetti";
 import type { Product, CartItem } from "./types";
-import { AdminCatalogoPanel } from "./components/AdminCatalogoPanel";
+import { AdminTiendaPanel } from "./components/AdminTiendaPanel";
+import { CuentaClientePanel } from "./components/CuentaClientePanel";
+import { crearPedidoDesdeCarrito } from "./lib/pedidos";
+import {
+  cargarConfigSitio,
+  CATEGORIAS_DEFAULT_SIN_TODOS,
+  TEXTO_LED_DEFAULT,
+} from "./lib/site-config";
 
 const NUMERO_WHATSAPP = "5493515416836";
-
-const TEXTO_LED_MARQUEE =
-  "EQUIPO TÉCNICO MULTIMARCAS PARA SENDERISTAS Y MONTAÑISTAS";
 
 const SEGMENTOS_LED_MARQUEE = 6;
 
@@ -25,20 +30,13 @@ const brand = {
   cream: "#F2EBD3",
 };
 
-const categorias = [
-  "Todos",
-  "Calzado",
-  "Camperas e impermeables",
-  "Mochilas",
-  "Accesorios",
-  "Térmico",
-  "Pack aventura",
-];
-
-const categoriasParaProducto = categorias.filter((c) => c !== "Todos");
-
 export default function Home() {
   const [productos, setProductos] = useState<Product[]>([]);
+  const [textoMarqueeLed, setTextoMarqueeLed] = useState(TEXTO_LED_DEFAULT);
+  const [categoriasMenu, setCategoriasMenu] = useState<string[]>(() => [
+    "Todos",
+    ...CATEGORIAS_DEFAULT_SIN_TODOS,
+  ]);
   const [loading, setLoading] = useState(true);
   const [errorFirebase, setErrorFirebase] = useState<string | null>(null);
 
@@ -53,7 +51,42 @@ export default function Home() {
   const [imagenAmpliada, setImagenAmpliada] = useState<{ src: string; alt: string } | null>(null);
   const [mostrarFaqModal, setMostrarFaqModal] = useState(false);
   const [mostrarAdminCatalogo, setMostrarAdminCatalogo] = useState(false);
+  const [mostrarCuentaCliente, setMostrarCuentaCliente] = useState(false);
+  const [usuarioTienda, setUsuarioTienda] = useState<User | null>(null);
+  const [finalizandoPedido, setFinalizandoPedido] = useState(false);
+  /** Aviso en el panel del carrito (evita alert() y deja el botón listo de nuevo al instante). */
+  const [avisoCheckout, setAvisoCheckout] = useState<string | null>(null);
   const inputBusquedaCatalogRef = useRef<HTMLInputElement>(null);
+
+  const categoriasParaProducto = categoriasMenu.filter((c) => c !== "Todos");
+
+  const refrescarSitio = useCallback(async () => {
+    try {
+      const cfg = await cargarConfigSitio();
+      setTextoMarqueeLed(cfg.marqueeText);
+      setCategoriasMenu(["Todos", ...cfg.categoriasSinTodos]);
+    } catch (e) {
+      console.error("Error cargando config del sitio:", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const cfg = await cargarConfigSitio();
+        if (!cancel) {
+          setTextoMarqueeLed(cfg.marqueeText);
+          setCategoriasMenu(["Todos", ...cfg.categoriasSinTodos]);
+        }
+      } catch (e) {
+        console.error("Error cargando config del sitio:", e);
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, []);
 
   const cargarProductos = useCallback(async () => {
     try {
@@ -88,6 +121,12 @@ export default function Home() {
   useEffect(() => {
     cargarProductos();
   }, [cargarProductos]);
+
+  useEffect(() => {
+    const auth = getFirebaseAuth();
+    const unsub = onAuthStateChanged(auth, setUsuarioTienda);
+    return () => unsub();
+  }, []);
 
   // Al pasar al catálogo escribiendo en el buscador, enfocar el input del catálogo para seguir escribiendo sin clic
   useEffect(() => {
@@ -150,7 +189,7 @@ export default function Home() {
   );
   const totalItems = carrito.reduce((acc, item) => acc + item.quantity, 0);
 
-  const finalizarPedido = () => {
+  const finalizarPedido = async () => {
     if (carrito.length === 0) return;
     const listaProductos = carrito
       .map(
@@ -158,8 +197,41 @@ export default function Home() {
           `- ${item.product.name} x${item.quantity} ($${item.product.price * item.quantity})`
       )
       .join("%0A");
-    const mensaje = `¡Hola! Quiero realizar un pedido en *Sangre Nómade Adventure*:%0A%0A${listaProductos}%0A%0A*Total: $${totalPrecio}*%0A%0A¿Cómo coordinamos el pago?`;
-    window.open(`https://wa.me/${NUMERO_WHATSAPP}?text=${mensaje}`, "_blank");
+
+    setAvisoCheckout(null);
+    let refPedido = "";
+    const u = getFirebaseAuth().currentUser;
+    if (u) {
+      setFinalizandoPedido(true);
+      try {
+        refPedido = await crearPedidoDesdeCarrito(u, carrito, totalPrecio);
+        setCarrito([]);
+      } catch (e) {
+        console.error(e);
+        const code =
+          e && typeof e === "object" && "code" in e
+            ? String((e as { code?: string }).code)
+            : "";
+        const detalleReglas =
+          code === "permission-denied"
+            ? " Firebase aún no tiene permiso para «pedidos»: en Firebase Console → Firestore → Reglas, publicá el contenido del archivo firestore.rules de este proyecto (botón Publicar)."
+            : "";
+        setAvisoCheckout(
+          `No pudimos guardar el pedido en tu cuenta.${detalleReglas} Podés abrir WhatsApp igual con el enlace de abajo.`
+        );
+      } finally {
+        setFinalizandoPedido(false);
+      }
+    }
+
+    const bloqueRef = refPedido
+      ? `%0A%0A*Referencia web (seguimiento en Mi cuenta):*%0A${refPedido}`
+      : "";
+    const mensaje = `¡Hola! Quiero realizar un pedido en *Sangre Nómade Adventure*:%0A%0A${listaProductos}%0A%0A*Total: $${totalPrecio}*%0A${bloqueRef}%0A%0A¿Cómo coordinamos el pago?`;
+    const urlWa = `https://wa.me/${NUMERO_WHATSAPP}?text=${mensaje}`;
+    requestAnimationFrame(() => {
+      window.open(urlWa, "_blank", "noopener,noreferrer");
+    });
   };
 
   const abrirWhatsAppAsesoramiento = () => {
@@ -172,10 +244,15 @@ export default function Home() {
     <main className="min-h-screen pb-20 font-sans text-[#2F3E46]" style={{ backgroundColor: brand.cream }}>
       
       {/* --- NAVBAR --- */}
-      <nav className="text-white py-3 px-4 shadow-md sticky top-0 z-50 border-b-2 border-[#2F3E46]/30" style={{ backgroundColor: brand.primary }}>
-        <div className="max-w-7xl mx-auto relative flex flex-wrap items-center justify-between gap-3">
+      <nav
+        className="sticky top-0 z-50 border-b border-[#F2EBD3]/18 py-3 px-4 text-white shadow-[0_8px_32px_-8px_rgba(0,0,0,0.35)]"
+        style={{
+          background: `linear-gradient(165deg, ${brand.primary} 0%, #263530 48%, #1f2b26 100%)`,
+        }}
+      >
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 md:flex-nowrap md:gap-4 lg:gap-6">
           {/* Logo (izquierda) */}
-          <div className="flex items-center gap-3 shrink-0 z-10">
+          <div className="z-10 flex shrink-0 items-center gap-3">
             <button
               onClick={() => { setVerTienda(false); setMenuMovilAbierto(false); }}
               className="flex items-center gap-2 md:gap-3 text-left font-bold font-heading whitespace-nowrap"
@@ -207,25 +284,33 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Enlaces al centro (solo escritorio) - centrado real en la pantalla */}
-          <div className="hidden md:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-            <div className="flex gap-6 text-sm md:text-base uppercase tracking-widest font-medium font-heading">
-              <button onClick={() => setVerTienda(false)} className="hover:text-[#e8c9a8] uppercase transition-colors">Inicio</button>
-              <a href="#nosotros" onClick={() => setVerTienda(false)} className="hover:text-[#e8c9a8] transition-colors uppercase">Nosotros</a>
-              <a href="#rutas-guias" onClick={() => setVerTienda(false)} className="hover:text-[#e8c9a8] transition-colors uppercase">Rutas y guías</a>
+          {/* Centro: ocupa el espacio libre para no chocar con Mi cuenta / carrito (solo escritorio) */}
+          <div className="hidden min-h-10 min-w-0 flex-1 items-center justify-center md:flex">
+            <div className="flex max-w-full flex-wrap justify-center gap-x-5 gap-y-1 text-sm font-medium font-heading uppercase tracking-widest lg:gap-x-6 lg:text-base">
+              <button onClick={() => setVerTienda(false)} className="transition-colors hover:text-[#e8c9a8]">
+                Inicio
+              </button>
+              <a href="#nosotros" onClick={() => setVerTienda(false)} className="transition-colors hover:text-[#e8c9a8]">
+                Nosotros
+              </a>
+              <a href="#rutas-guias" onClick={() => setVerTienda(false)} className="transition-colors hover:text-[#e8c9a8]">
+                Rutas y guías
+              </a>
               <div className="relative">
                 <button
+                  type="button"
                   onClick={() => setMostrarCategorias(!mostrarCategorias)}
-                  className="hover:text-[#e8c9a8] transition-colors flex items-center gap-1 uppercase tracking-widest outline-none"
+                  className="flex items-center gap-1 uppercase tracking-widest outline-none transition-colors hover:text-[#e8c9a8]"
                 >
                   Equipamiento {mostrarCategorias ? "▴" : "▾"}
                 </button>
                 {mostrarCategorias && (
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-[min(100vw-2rem,18rem)] max-h-[70vh] overflow-y-auto bg-[#F2EBD3] rounded-xl shadow-2xl border-2 border-[#2F3E46]/20 overflow-x-hidden z-50 text-[#2F3E46] normal-case tracking-normal font-sans">
-                    {categorias.map((cat) => (
+                  <div className="absolute top-full left-1/2 z-50 mt-2 w-[min(100vw-2rem,18rem)] max-h-[70vh] -translate-x-1/2 overflow-x-hidden overflow-y-auto rounded-xl border-2 border-[#2F3E46]/20 bg-[#F2EBD3] font-sans text-[#2F3E46] shadow-2xl normal-case tracking-normal">
+                    {categoriasMenu.map((cat) => (
                       <button
                         key={cat}
-                        className={`w-full text-left px-5 py-3 text-sm hover:bg-[#A65D37]/15 transition-colors ${categoriaSeleccionada === cat ? "bg-[#53634B]/15 font-bold text-[#53634B]" : ""}`}
+                        type="button"
+                        className={`w-full px-5 py-3 text-left text-sm transition-colors hover:bg-[#A65D37]/15 ${categoriaSeleccionada === cat ? "bg-[#53634B]/15 font-bold text-[#53634B]" : ""}`}
                         onClick={() => {
                           setCategoriaSeleccionada(cat);
                           setVerTienda(true);
@@ -238,39 +323,65 @@ export default function Home() {
                   </div>
                 )}
               </div>
-              <a href="#contacto" className="hover:text-[#e8c9a8] transition-colors">Contacto</a>
+              <a href="#contacto" className="transition-colors hover:text-[#e8c9a8]">
+                Contacto
+              </a>
             </div>
           </div>
 
-          {/* Derecha: carrito y buscador con la misma altura */}
-          <div className="flex flex-col items-end gap-1.5 shrink-0 z-10">
-            <button
-              onClick={() => setMostrarResumen(!mostrarResumen)}
-              className="bg-white px-4 h-10 rounded-full font-bold shadow-md text-sm active:scale-95 transition-all w-fit flex items-center justify-center border-2 border-[#2F3E46]/10"
-              style={{ color: brand.forest }}
-              aria-label={`Tu carrito tiene ${totalItems} producto(s)`}
-            >
-              🛒 Tu Carrito ({totalItems})
-            </button>
+          {/* Derecha: ancho fijo = buscador; fila superior ocupa el mismo ancho (dos columnas iguales) */}
+          <div className="z-10 ml-auto flex w-full max-w-md shrink-0 flex-col gap-2 md:w-[14rem] md:max-w-none lg:w-[15.5rem]">
+            <div className="grid w-full grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setMostrarCuentaCliente(true)}
+                className="flex h-10 min-w-0 items-center justify-center rounded-full border border-[#2F3E46]/12 bg-[#F2EBD3] px-2 font-heading text-[10px] font-bold uppercase tracking-wide text-[#2F3E46] shadow-sm transition-all hover:border-[#A65D37]/35 hover:bg-[#e8dfc8] active:scale-[0.98] sm:text-[11px] sm:px-3"
+              >
+                <span className="truncate">{usuarioTienda ? "Mi cuenta" : "Entrar / Registro"}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMostrarResumen(!mostrarResumen)}
+                className="flex h-10 min-w-0 items-center justify-center gap-1 rounded-full border border-[#2F3E46]/12 bg-[#F2EBD3] px-2 font-heading text-[10px] font-bold uppercase tracking-wide text-[#2F3E46] shadow-sm transition-all hover:border-[#53634B]/35 hover:bg-[#e8dfc8] active:scale-[0.98] sm:gap-1.5 sm:text-[11px] sm:px-3"
+                aria-label={`Tu carrito tiene ${totalItems} producto(s)`}
+              >
+                <svg className="h-3.5 w-3.5 shrink-0 text-[#53634B] sm:h-4 sm:w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+                <span className="truncate">Carrito</span>
+                <span className="min-w-[1.1rem] shrink-0 rounded-md bg-[#53634B]/15 px-0.5 text-center text-[10px] tabular-nums leading-none text-[#53634B] sm:min-w-[1.25rem] sm:text-[11px]">
+                  {totalItems}
+                </span>
+              </button>
+            </div>
             {!verTienda && (
-              <div className="hidden md:block w-44 lg:w-52">
-                <div className="relative h-10">
-                  <span className="absolute inset-y-0 left-3 flex items-center text-white/70 pointer-events-none text-sm">🔍</span>
-                  <input
-                    type="search"
-                    value={busqueda}
-                    onChange={(e) => {
-                      setBusqueda(e.target.value);
-                      if (e.target.value.trim()) setVerTienda(true);
-                    }}
-                    placeholder="Buscar equipamiento..."
-                    className="w-full h-10 pl-9 pr-8 rounded-full border border-white/25 bg-white/15 text-white placeholder-white/60 text-sm outline-none focus:bg-white/25 focus:border-white/40 focus:ring-1 focus:ring-white/30 transition-colors"
-                    aria-label="Buscar productos"
-                  />
-                  {busqueda && (
-                    <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-white/70 hover:text-white p-1 transition-colors" onClick={() => setBusqueda("")} aria-label="Borrar búsqueda">✕</button>
-                  )}
-                </div>
+              <div className="relative w-full">
+                <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#F2EBD3]/55" aria-hidden>
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </span>
+                <input
+                  type="search"
+                  value={busqueda}
+                  onChange={(e) => {
+                    setBusqueda(e.target.value);
+                    if (e.target.value.trim()) setVerTienda(true);
+                  }}
+                  placeholder="Buscar equipamiento…"
+                  className="h-10 w-full rounded-full border border-[#F2EBD3]/22 bg-[#F2EBD3]/10 pl-10 pr-9 text-[13px] leading-none text-[#F2EBD3] outline-none transition-all placeholder:text-[#F2EBD3]/45 focus:border-[#e8c9a8]/55 focus:bg-[#F2EBD3]/16 focus:ring-2 focus:ring-[#A65D37]/25"
+                  aria-label="Buscar productos"
+                />
+                {busqueda && (
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-[#F2EBD3]/60 transition-colors hover:bg-white/10 hover:text-[#F2EBD3]"
+                    onClick={() => setBusqueda("")}
+                    aria-label="Borrar búsqueda"
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -281,7 +392,11 @@ export default function Home() {
           <div className="md:hidden mt-4 pt-4 border-t border-white/20 flex flex-col gap-2 text-sm uppercase tracking-widest">
             {!verTienda && (
               <div className="relative mb-2">
-                <span className="absolute inset-y-0 left-3 flex items-center text-white/70 pointer-events-none text-sm">🔍</span>
+                <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[#F2EBD3]/55" aria-hidden>
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </span>
                 <input
                   type="search"
                   value={busqueda}
@@ -289,12 +404,19 @@ export default function Home() {
                     setBusqueda(e.target.value);
                     if (e.target.value.trim()) setVerTienda(true);
                   }}
-                  placeholder="Buscar equipamiento..."
-                  className="w-full pl-9 pr-8 py-2.5 rounded-full border border-white/25 bg-white/15 text-white placeholder-white/60 text-sm normal-case outline-none focus:bg-white/25 focus:border-white/40"
+                  placeholder="Buscar equipamiento…"
+                  className="w-full rounded-full border border-[#F2EBD3]/22 bg-[#F2EBD3]/10 py-2.5 pl-10 pr-8 text-sm normal-case text-[#F2EBD3] outline-none transition-all placeholder:text-[#F2EBD3]/45 focus:border-[#e8c9a8]/55 focus:bg-[#F2EBD3]/16 focus:ring-2 focus:ring-[#A65D37]/25"
                   aria-label="Buscar productos"
                 />
                 {busqueda && (
-                  <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-white/70 hover:text-white p-1" onClick={() => setBusqueda("")} aria-label="Borrar">✕</button>
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-[#F2EBD3]/60 hover:bg-white/10 hover:text-[#F2EBD3]"
+                    onClick={() => setBusqueda("")}
+                    aria-label="Borrar"
+                  >
+                    ✕
+                  </button>
                 )}
               </div>
             )}
@@ -303,10 +425,20 @@ export default function Home() {
             <a href="#rutas-guias" onClick={() => setMenuMovilAbierto(false)} className="block py-2 hover:text-[#e8c9a8]">Rutas y guías</a>
             <button onClick={() => { setVerTienda(true); setCategoriaSeleccionada("Todos"); setMenuMovilAbierto(false); }} className="text-left py-2 hover:text-[#e8c9a8]">Ver equipamiento</button>
             <a href="#contacto" onClick={() => setMenuMovilAbierto(false)} className="py-2 hover:text-[#e8c9a8]">Contacto</a>
+            <button
+              type="button"
+              onClick={() => {
+                setMostrarCuentaCliente(true);
+                setMenuMovilAbierto(false);
+              }}
+              className="text-left py-2 hover:text-[#e8c9a8]"
+            >
+              {usuarioTienda ? "Mi cuenta" : "Entrar / Registro"}
+            </button>
             <div className="pt-2 border-t border-white/20">
               <p className="text-xs normal-case opacity-80 mb-2">Productos por categoría</p>
               <div className="flex flex-wrap gap-2">
-                {categorias.filter((c) => c !== "Todos").map((cat) => (
+                {categoriasMenu.filter((c) => c !== "Todos").map((cat) => (
                   <button
                     key={cat}
                     className="px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-xs"
@@ -327,32 +459,56 @@ export default function Home() {
 
       {/* Carrito flotante */}
       {mostrarResumen && (
-        <div className="fixed inset-x-4 top-20 md:left-auto md:right-6 md:w-80 bg-white shadow-2xl rounded-2xl p-6 z-[60] border border-gray-100 animate-in fade-in slide-in-from-top-4 duration-300">
-          <div className="flex justify-between items-center mb-4 border-b pb-2 font-bold text-lg">
-            <span>Tu Pedido</span>
-            <button onClick={() => setMostrarResumen(false)} className="text-gray-400 p-1" aria-label="Cerrar carrito">✕</button>
+        <div
+          className="animate-in fade-in slide-in-from-top-4 duration-300 fixed inset-x-4 top-20 z-[60] rounded-3xl border-2 border-[#2F3E46]/12 bg-gradient-to-b from-[#fefdfb] to-[#F2EBD3]/35 p-5 shadow-[0_20px_50px_-12px_rgba(47,62,70,0.35)] md:left-auto md:right-6 md:w-[22rem]"
+          role="dialog"
+          aria-labelledby="carrito-titulo"
+        >
+          <div className="mb-4 flex items-start justify-between gap-2 border-b border-[#2F3E46]/10 pb-3">
+            <div>
+              <p className="font-heading text-[10px] font-semibold uppercase tracking-[0.18em] text-[#A65D37]">
+                Sangre Nómade
+              </p>
+              <h2 id="carrito-titulo" className="font-heading text-lg font-bold uppercase tracking-wide text-[#2F3E46]">
+                Tu pedido
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setMostrarResumen(false);
+                setAvisoCheckout(null);
+              }}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#2F3E46]/10 text-[#2F3E46]/50 transition-colors hover:bg-[#2F3E46]/5 hover:text-[#2F3E46]"
+              aria-label="Cerrar carrito"
+            >
+              ✕
+            </button>
           </div>
-          <div className="max-h-60 overflow-y-auto mb-4 space-y-3">
+          <div className="mb-4 max-h-60 space-y-2 overflow-y-auto pr-1">
             {carrito.length === 0 ? (
-              <p className="text-gray-500 text-sm py-4 text-center">Tu carrito está vacío</p>
+              <p className="py-6 text-center text-sm text-[#2F3E46]/50">Tu carrito está vacío.</p>
             ) : (
               carrito.map((item) => (
-                <div key={item.product.id} className="flex justify-between items-start text-sm border-b pb-2 gap-2">
+                <div
+                  key={item.product.id}
+                  className="flex items-start justify-between gap-2 rounded-xl border border-[#2F3E46]/8 bg-white/70 px-3 py-2.5 text-sm"
+                >
                   <div className="min-w-0 flex-1">
-                    <span className="font-medium block">{item.product.name}</span>
-                    <div className="flex items-center gap-2 mt-1">
+                    <span className="block font-medium text-[#2F3E46]">{item.product.name}</span>
+                    <div className="mt-1.5 flex items-center gap-2">
                       <button
                         type="button"
-                        className="w-7 h-7 rounded border border-gray-200 flex items-center justify-center hover:bg-gray-100 font-bold"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#2F3E46]/12 bg-[#F2EBD3]/40 text-[#2F3E46] transition-colors hover:bg-[#F2EBD3]"
                         onClick={() => cambiarCantidad(item.product.id, -1)}
                         aria-label="Restar uno"
                       >
                         −
                       </button>
-                      <span className="font-bold w-6 text-center">{item.quantity}</span>
+                      <span className="w-7 text-center font-heading font-bold text-[#2F3E46]">{item.quantity}</span>
                       <button
                         type="button"
-                        className="w-7 h-7 rounded border border-gray-200 flex items-center justify-center hover:bg-gray-100 font-bold"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#2F3E46]/12 bg-[#F2EBD3]/40 text-[#2F3E46] transition-colors hover:bg-[#F2EBD3]"
                         onClick={() => cambiarCantidad(item.product.id, 1)}
                         aria-label="Sumar uno"
                       >
@@ -360,9 +516,18 @@ export default function Home() {
                       </button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <span className="font-bold">${(item.product.price * item.quantity).toLocaleString("es-AR")}</span>
-                    <button onClick={() => eliminarDelCarrito(item.product.id)} className="p-1 hover:bg-gray-100 rounded" aria-label="Quitar del carrito">🗑️</button>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <span className="font-heading font-bold text-[#53634B]">
+                      ${(item.product.price * item.quantity).toLocaleString("es-AR")}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => eliminarDelCarrito(item.product.id)}
+                      className="text-xs font-medium text-[#A65D37] underline-offset-2 hover:underline"
+                      aria-label="Quitar del carrito"
+                    >
+                      Quitar
+                    </button>
                   </div>
                 </div>
               ))
@@ -370,8 +535,42 @@ export default function Home() {
           </div>
           {carrito.length > 0 && (
             <>
-              <div className="text-xl font-black text-[#53634B] mb-4">TOTAL: ${totalPrecio.toLocaleString("es-AR")}</div>
-              <button onClick={finalizarPedido} className="w-full bg-[#53634B] text-white py-4 rounded-xl font-bold hover:bg-[#3d4a38] transition-colors">Enviar WhatsApp</button>
+              <div className="mb-3 rounded-xl border border-[#53634B]/20 bg-[#53634B]/8 px-3 py-2.5">
+                <p className="font-heading text-xs font-bold uppercase tracking-wider text-[#2F3E46]/70">
+                  Total estimado
+                </p>
+                <p className="font-heading text-2xl font-bold text-[#2F3E46]">
+                  ${totalPrecio.toLocaleString("es-AR")}
+                </p>
+              </div>
+              {avisoCheckout && (
+                <div
+                  className="mb-3 rounded-2xl border border-[#A65D37]/30 bg-[#fdf6f0] px-3 py-3 text-xs leading-relaxed text-[#5c3319]"
+                  role="alert"
+                >
+                  {avisoCheckout}
+                </div>
+              )}
+              {usuarioTienda ? (
+                <p className="mb-3 text-xs leading-relaxed text-[#2F3E46]/65">
+                  Con sesión iniciada, el pedido puede quedar guardado para ver el estado en «Mi cuenta».
+                </p>
+              ) : (
+                <p className="mb-3 text-xs leading-relaxed text-[#2F3E46]/65">
+                  ¿Seguimiento del pedido? Entrá con «Entrar / Registro» antes de enviar.
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => void finalizarPedido()}
+                disabled={finalizandoPedido}
+                className="w-full rounded-2xl bg-[#53634B] py-3.5 font-heading text-sm font-bold uppercase tracking-wide text-white shadow-md transition-all hover:bg-[#3d4a38] disabled:pointer-events-none disabled:opacity-55"
+              >
+                {finalizandoPedido ? "Guardando…" : "Enviar por WhatsApp"}
+              </button>
+              <p className="mt-2 text-center text-[10px] text-[#2F3E46]/45">
+                Se abre WhatsApp con tu pedido; coordinás pago y envío ahí.
+              </p>
             </>
           )}
         </div>
@@ -405,6 +604,7 @@ export default function Home() {
               alt={imagenAmpliada.alt}
               className="max-w-full max-h-[90vh] w-auto object-contain rounded-lg shadow-2xl"
               draggable={false}
+              referrerPolicy="no-referrer"
               onClick={(e) => e.stopPropagation()}
             />
           </div>
@@ -434,13 +634,13 @@ export default function Home() {
       ) : !verTienda ? (
         <>
           <div
-            className="border-b border-zinc-800 bg-[#0a0a0a] py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+            className="border-b border-[#2F3E46]/50 bg-gradient-to-r from-[#1a2320] via-[#152018] to-[#1a2320] py-1.5 shadow-[inset_0_1px_0_rgba(242,235,211,0.07)]"
             role="region"
             aria-label="Equipo técnico multimarcas para senderistas y montañistas"
           >
             <div className="overflow-hidden">
               <div
-                className="sn-marquee-track sn-marquee-led-text flex w-max font-mono text-xs font-medium uppercase leading-snug tracking-[0.08em] text-[#a7f3d0] sm:text-sm"
+                className="sn-marquee-track sn-marquee-led-text flex w-max font-heading text-[11px] font-semibold uppercase leading-snug tracking-[0.14em] text-[#e8d4b8] sm:text-xs"
                 style={
                   { "--sn-marquee-segments": SEGMENTOS_LED_MARQUEE } as React.CSSProperties
                 }
@@ -451,7 +651,7 @@ export default function Home() {
                     className="inline-block shrink-0 whitespace-nowrap px-6 py-0.5 sm:px-8"
                     aria-hidden={i > 0}
                   >
-                    {TEXTO_LED_MARQUEE}
+                    {textoMarqueeLed}
                   </span>
                 ))}
               </div>
@@ -490,7 +690,15 @@ export default function Home() {
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name }); } }}
                     aria-label={`Ver foto ampliada de ${producto.name}`}
                   >
-                    <Image src={producto.image} alt={producto.name} fill className="object-cover pointer-events-none" sizes="(max-width:768px) 100vw, 33vw" unoptimized />
+                    <Image
+                      src={producto.image}
+                      alt={producto.name}
+                      fill
+                      className="object-cover pointer-events-none"
+                      sizes="(max-width:768px) 100vw, 33vw"
+                      unoptimized
+                      referrerPolicy="no-referrer"
+                    />
                     <span className="absolute inset-0 flex items-end justify-center pb-2 text-white text-sm font-medium bg-gradient-to-t from-black/50 to-transparent opacity-0 hover:opacity-100 transition-opacity">Ver más grande</span>
                   </div>
                   <h4 className="text-xl font-bold">{producto.name}</h4>
@@ -564,7 +772,15 @@ export default function Home() {
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name }); } }}
                   aria-label={`Ver foto ampliada de ${producto.name}`}
                 >
-                  <Image src={producto.image} alt={producto.name} fill className="object-cover pointer-events-none" sizes="(max-width:768px) 100vw, 33vw" unoptimized />
+                  <Image
+                    src={producto.image}
+                    alt={producto.name}
+                    fill
+                    className="object-cover pointer-events-none"
+                    sizes="(max-width:768px) 100vw, 33vw"
+                    unoptimized
+                    referrerPolicy="no-referrer"
+                  />
                   <span className="absolute inset-0 flex items-end justify-center pb-2 text-white text-sm font-medium bg-gradient-to-t from-black/50 to-transparent opacity-0 hover:opacity-100 transition-opacity">Ver más grande</span>
                 </div>
                 <div className="p-6 text-center flex-grow flex flex-col justify-between">
@@ -636,7 +852,7 @@ export default function Home() {
                   id: 0,
                   pregunta: "¿Cómo comprar?",
                   respuesta:
-                    "Elegí del equipamiento, agregá al carrito y enviá el pedido por WhatsApp para coordinar pago y envío a todo el país.",
+                    "Elegí del equipamiento, agregá al carrito y enviá el pedido por WhatsApp para coordinar pago y envío a todo el país. Si creás una cuenta e iniciás sesión antes de enviar, el pedido queda registrado y podés ver el estado en «Mi cuenta».",
                 },
                 {
                   id: 1,
@@ -740,25 +956,35 @@ export default function Home() {
               <a href="https://facebook.com/sangrenomade" target="_blank" rel="noopener noreferrer" className="bg-[#F2EBD3] p-2 rounded-full border border-[#2F3E46]/15 hover:bg-[#A65D37]/15 transition-colors font-medium">Facebook</a>
             </div>
           </div>
-          <div>
-            <h4 className="font-bold mb-4 text-xl text-[#2F3E46] font-heading uppercase tracking-wide text-lg">Sangre Nómade Adventure</h4>
-            <p className="text-gray-500 text-sm">© 2026 - Córdoba, Argentina.</p>
+          <div className="flex flex-col items-center space-y-3 md:items-start">
+            <h4 className="text-xl font-bold font-heading uppercase tracking-wide text-lg text-[#2F3E46]">
+              Sangre Nómade Adventure
+            </h4>
+            <p className="text-sm text-gray-600">© 2026 - Córdoba, Argentina.</p>
             <button
               type="button"
               onClick={() => setMostrarAdminCatalogo(true)}
-              className="mt-4 text-xs text-[#53634B]/80 hover:text-[#2F3E46] underline underline-offset-2"
+              className="rounded-md bg-transparent px-1 py-0.5 text-center font-heading text-[10px] font-semibold uppercase tracking-[0.15em] text-[#53634B]/80 transition-colors hover:text-[#2F3E46] md:text-left"
             >
-              Agregar productos al catálogo
+              Administrar tienda
             </button>
           </div>
         </div>
       </footer>
 
-      <AdminCatalogoPanel
+      <CuentaClientePanel
+        open={mostrarCuentaCliente}
+        onClose={() => setMostrarCuentaCliente(false)}
+      />
+
+      <AdminTiendaPanel
         open={mostrarAdminCatalogo}
         onClose={() => setMostrarAdminCatalogo(false)}
         categoriasProducto={categoriasParaProducto}
+        productos={productos}
+        marqueeText={textoMarqueeLed}
         onCatalogoActualizado={cargarProductos}
+        onSiteConfigActualizado={refrescarSitio}
       />
       
       <a href="https://wa.me/5493515416836" target="_blank" rel="noopener noreferrer" className="fixed bottom-6 left-6 bg-[#25d366] text-white p-4 rounded-full shadow-2xl z-[100] hover:scale-110 transition-transform">
