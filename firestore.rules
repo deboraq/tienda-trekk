@@ -1,12 +1,18 @@
 rules_version = '2';
 
-// Copiá este contenido en Firebase Console → Firestore Database → Reglas → Publicar.
-// Catálogo público: cualquiera puede leer productos; nadie escribe desde el cliente.
+// Reemplazá "tu-correo-admin@gmail.com" por el email de tu usuario en Firebase Authentication
+// (mismo valor que en storage.rules). Luego publicá reglas en la consola o con Firebase CLI.
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isCatalogAdmin() {
+      return request.auth != null
+        && request.auth.token.email == "tu-correo-admin@gmail.com";
+    }
+
     match /productos/{productId} {
       allow read: if true;
-      allow write: if false;
+      allow create: if isCatalogAdmin();
+      allow update, delete: if isCatalogAdmin();
     }
   }
 }
