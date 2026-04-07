@@ -1,13 +1,12 @@
 rules_version = '2';
 
-// Misma condición que en firestore.rules: solo tu usuario de Authentication puede subir fotos.
-// Reemplazá "tu-correo-admin@gmail.com" por el email con el que creás el usuario en Firebase.
+// Mismo email admin que en firestore.rules (subida de fotos a productos/).
 service firebase.storage {
   match /b/{bucket}/o {
     match /productos/{fileName} {
       allow read: if true;
       allow write: if request.auth != null
-        && request.auth.token.email == "tu-correo-admin@gmail.com";
+        && request.auth.token.email == "debocab2@gmail.com";
     }
   }
 }

@@ -18,13 +18,13 @@ npm ci
 
 2. Variables de entorno: copiá [`.env.example`](./.env.example) a `.env.local` y completá las claves **públicas** de Firebase (mismo valor que en la consola del proyecto → Configuración del proyecto → Tus apps).
 
-3. **Firestore y Storage:** en [`firestore.rules`](./firestore.rules) y [`storage.rules`](./storage.rules) reemplazá **`tu-correo-admin@gmail.com`** por el **mismo email** con el que vas a crear el usuario administrador. Publicá ambas reglas (Firebase CLI o consola: Firestore → Reglas, Storage → Reglas).
+3. **Firestore y Storage:** en [`firestore.rules`](./firestore.rules) y [`storage.rules`](./storage.rules) reemplazá **`tu-correo-admin@gmail.com`** por el **mismo email** con el que vas a crear el usuario administrador. Las reglas incluyen la colección **`config`** (documento `site`: texto LED y categorías). Publicá ambas reglas (Firebase CLI o consola: Firestore → Reglas, Storage → Reglas).
 
 4. **Authentication:** en Firebase Console → **Authentication** → método **Correo/contraseña** (activar) → **Users** → agregar usuario con ese email y una contraseña segura.
 
 5. **Storage:** en la consola, creá el bucket por defecto si el proyecto aún no tiene Storage. Las fotos de producto se guardan bajo la carpeta `productos/`.
 
-6. **Agregar productos desde la web:** en el pie de página, enlace **«Agregar productos al catálogo»** → iniciá sesión con el usuario del paso 4 → elegí **«Enlace público»** (recomendado si no tenés Storage) o **«Subir archivo»** (Firebase Storage). Con enlace: subí la imagen a un servicio gratuito (p. ej. [ImgBB](https://imgbb.com)), copiá la **URL directa** que termine en `.jpg` / `.png` y pegala en el formulario. Con **otro dominio** de imagen, agregalo en [`next.config.ts`](next.config.ts) bajo `images.remotePatterns`.
+6. **Administrar la tienda desde la web:** en el pie, enlace **«Administrar tienda»** → iniciá sesión → pestañas **Portada LED** (texto del carril), **Categorías** (menú Equipamiento), **Productos** (alta, edición, borrado; imagen por **URL** o **archivo** si tenés Storage). Los datos viven en Firestore: colección `productos` y documento `config/site` (`marqueeText`, `categorias`). Con **otro dominio** de imagen, agregalo en [`next.config.ts`](next.config.ts) bajo `images.remotePatterns`.
 
 7. Levantar desarrollo:
 
@@ -52,7 +52,8 @@ Abrí **http://127.0.0.1:3000** (este proyecto usa `--hostname 127.0.0.1`). Más
 ## Estructura útil
 
 - `app/page.tsx` — UI principal, carrito, catálogo
-- `app/components/AdminCatalogoPanel.tsx` — alta de productos con foto (requiere Auth + reglas)
+- `app/components/AdminTiendaPanel.tsx` — panel admin (LED, categorías, productos)
+- `app/lib/site-config.ts` — lectura de `config/site` y valores por defecto
 - `app/firebase/config.ts` — inicialización cliente de Firebase
 - `public/logo-sangre-nomade.png` — logo de marca
 
