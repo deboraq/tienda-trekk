@@ -48,7 +48,8 @@ export function esEstadoPedido(v: string): v is PedidoEstado {
 export async function crearPedidoDesdeCarrito(
   user: User,
   carrito: CartItem[],
-  total: number
+  total: number,
+  clientPhone: string
 ): Promise<string> {
   await user.getIdToken(true);
   const email =
@@ -63,6 +64,7 @@ export async function crearPedidoDesdeCarrito(
   const ref = await addDoc(collection(getDb(), "pedidos"), {
     userId: user.uid,
     userEmail: email,
+    clientPhone,
     items,
     total,
     status: "recibido",
@@ -114,10 +116,17 @@ export function docDataAPedido(
     };
   });
 
+  const phoneRaw = data.clientPhone;
+  const clientPhone =
+    typeof phoneRaw === "string" && /^[0-9]{10,15}$/.test(phoneRaw)
+      ? phoneRaw
+      : undefined;
+
   return {
     id,
     userId: uid,
     userEmail: email,
+    clientPhone,
     items,
     total,
     status,

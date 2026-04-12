@@ -5,6 +5,8 @@ export interface Product {
   price: number;
   image: string;
   category?: string;
+  /** Entero ≥ 0. Ausente = sin tope en la web (productos viejos). */
+  stock?: number;
 }
 
 export interface CartItem {
@@ -32,6 +34,8 @@ export interface Pedido {
   id: string;
   userId: string;
   userEmail: string;
+  /** WhatsApp del cliente (solo dígitos, ej. 549…). Para avisos desde el panel. */
+  clientPhone?: string;
   items: PedidoLineItem[];
   total: number;
   status: PedidoEstado;

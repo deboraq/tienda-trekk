@@ -14,6 +14,7 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  deleteField,
   query,
   orderBy,
   limit,
@@ -31,6 +32,11 @@ import {
 import { CATALOG_ADMIN_EMAIL, esCatalogAdminEmail } from "../lib/catalog-admin";
 import type { Pedido, PedidoEstado, Product } from "../types";
 import { docDataAPedido, etiquetaEstadoPedido, PEDIDO_ESTADOS } from "../lib/pedidos";
+import {
+  construirMensajeWhatsAppPedidoCliente,
+  normalizarTelefonoWa,
+  urlWhatsAppParaNumero,
+} from "../lib/whatsapp";
 
 type Tab = "portada" | "categorias" | "catalogo" | "pedidos";
 
@@ -158,6 +164,8 @@ export function AdminTiendaPanel({
   const [modoImagen, setModoImagen] = useState<"url" | "archivo">("url");
   const [imageUrl, setImageUrl] = useState("");
   const [archivo, setArchivo] = useState<File | null>(null);
+  /** Vacío = sin tope de stock en la web; "0" = sin venta. */
+  const [stockDraft, setStockDraft] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [formOk, setFormOk] = useState<string | null>(null);
@@ -169,6 +177,12 @@ export function AdminTiendaPanel({
   const [actualizandoPedidoId, setActualizandoPedidoId] = useState<string | null>(
     null
   );
+  /** Pedidos sin clientPhone en Firestore (viejos): el admin completa acá. */
+  const [waTelManual, setWaTelManual] = useState<Record<string, string>>({});
+  /** Marca el mensaje como “pedido actualizado” al avisar por WhatsApp. */
+  const [waPedidoModificado, setWaPedidoModificado] = useState<
+    Record<string, boolean>
+  >({});
 
   const cargarPedidosAdmin = useCallback(async () => {
     setPedidoMsg(null);
@@ -259,6 +273,7 @@ export function AdminTiendaPanel({
     setNombre("");
     setDescripcion("");
     setPrecio("");
+    setStockDraft("");
     setCategoria(categoriasProducto[0] ?? "");
     setModoImagen("url");
     setImageUrl("");
@@ -279,6 +294,9 @@ export function AdminTiendaPanel({
     setNombre(p.name);
     setDescripcion(p.description ?? "");
     setPrecio(String(p.price ?? ""));
+    setStockDraft(
+      typeof p.stock === "number" ? String(p.stock) : ""
+    );
     setCategoria(p.category ?? categoriasProducto[0] ?? "");
     setModoImagen("url");
     setImageUrl(p.image ?? "");
@@ -372,6 +390,18 @@ export function AdminTiendaPanel({
       setFormError("Elegí categoría (guardá categorías en la pestaña correspondiente si falta).");
       return;
     }
+    const stockTrim = stockDraft.trim();
+    let stockValor: number | undefined | ReturnType<typeof deleteField>;
+    if (stockTrim === "") {
+      stockValor = editando ? deleteField() : undefined;
+    } else {
+      const n = Number(String(stockTrim).replace(",", "."));
+      if (!Number.isFinite(n) || n < 0 || Math.floor(n) !== n) {
+        setFormError("Stock: usá un número entero ≥ 0 o dejalo vacío.");
+        return;
+      }
+      stockValor = n;
+    }
     if (modoImagen === "archivo" && !STORAGE_UPLOAD_HABILITADO) {
       setFormError(
         "Subir archivo requiere Firebase Storage. Usá «Enlace público»: subí la foto a ImgBB y pegá la URL, o activá Storage y NEXT_PUBLIC_FIREBASE_STORAGE_UPLOAD=true."
@@ -439,13 +469,16 @@ export function AdminTiendaPanel({
         imageField = await subirABucket(archivo);
       }
 
-      const payload = {
+      const payload: Record<string, unknown> = {
         name: nombre.trim(),
         description: descripcion.trim() || null,
         price: precioNum,
         image: imageField,
         category: categoriaSelectValue,
       };
+      if (stockValor !== undefined) {
+        payload.stock = stockValor;
+      }
       if (editando) {
         await updateDoc(doc(getDb(), "productos", editando.id), payload);
         setFormOk("Producto actualizado.");
@@ -479,6 +512,32 @@ export function AdminTiendaPanel({
     } finally {
       setBorrandoId(null);
     }
+  };
+
+  const abrirWhatsAppAlCliente = (p: Pedido) => {
+    const manual = waTelManual[p.id]?.trim() ?? "";
+    const digitos =
+      p.clientPhone && /^[0-9]{10,15}$/.test(p.clientPhone)
+        ? p.clientPhone
+        : normalizarTelefonoWa(manual);
+    if (!digitos) {
+      setPedidoMsg(
+        "No hay un WhatsApp válido. Si el pedido es viejo, ingresá el número del cliente arriba del botón."
+      );
+      return;
+    }
+    setPedidoMsg(null);
+    const mensaje = construirMensajeWhatsAppPedidoCliente({
+      pedidoId: p.id,
+      items: p.items.map((i) => ({ name: i.name, quantity: i.quantity })),
+      total: p.total,
+      pedidoActualizado: waPedidoModificado[p.id] === true,
+    });
+    window.open(
+      urlWhatsAppParaNumero(digitos, mensaje),
+      "_blank",
+      "noopener,noreferrer"
+    );
   };
 
   const cambiarEstadoPedido = async (pedidoId: string, status: PedidoEstado) => {
@@ -850,6 +909,12 @@ export function AdminTiendaPanel({
                               </span>
                               <span className="text-[#2F3E46]/40"> · </span>
                               {p.category ?? "—"}
+                              {typeof p.stock === "number" && (
+                                <>
+                                  <span className="text-[#2F3E46]/40"> · </span>
+                                  Stock {p.stock}
+                                </>
+                              )}
                             </p>
                           </div>
                           <div className="flex shrink-0 gap-2">
@@ -935,6 +1000,27 @@ export function AdminTiendaPanel({
                       className={inputClass}
                       required
                     />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
+                      Stock (unidades){" "}
+                      <span className="font-normal normal-case text-[#2F3E46]/45">
+                        (opcional)
+                      </span>
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      inputMode="numeric"
+                      value={stockDraft}
+                      onChange={(e) => setStockDraft(e.target.value)}
+                      placeholder="Vacío = sin tope en la web"
+                      className={inputClass}
+                    />
+                    <p className="mt-1 text-[11px] leading-relaxed text-[#2F3E46]/55">
+                      0 = sin venta online. Vacío = no mostramos límite (productos viejos o reposición abierta).
+                    </p>
                   </label>
                   <label className="block">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
@@ -1081,6 +1167,16 @@ export function AdminTiendaPanel({
                       {cargandoPedidos ? "Cargando…" : "Actualizar lista"}
                     </button>
                   </div>
+                  <div className="rounded-2xl border border-[#53634B]/25 bg-[#53634B]/8 px-4 py-3 text-xs leading-relaxed text-[#2F3E46]">
+                    <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[#53634B]">
+                      Rutina sugerida
+                    </p>
+                    <ol className="mt-2 list-decimal space-y-1.5 pl-4 marker:font-medium">
+                      <li>Revisá pedidos nuevos al menos una vez al día.</li>
+                      <li>Respondé por WhatsApp y actualizá el estado acá para que el cliente lo vea en «Mi cuenta».</li>
+                      <li>Si vendés unidades limitadas, ajustá el stock en la pestaña Productos.</li>
+                    </ol>
+                  </div>
                   {pedidoMsg && (
                     <div
                       className={`rounded-2xl border px-4 py-3 text-sm leading-snug ${
@@ -1170,6 +1266,59 @@ export function AdminTiendaPanel({
                           <p className="mt-1 font-bold text-[#A65D37]">
                             ${p.total.toLocaleString("es-AR")}
                           </p>
+                          {p.clientPhone ? (
+                            <p className="mt-1.5 text-[11px] text-[#53634B]">
+                              WhatsApp cliente:{" "}
+                              <span className="font-mono font-semibold">
+                                +{p.clientPhone}
+                              </span>
+                            </p>
+                          ) : (
+                            <label className="mt-2 block text-left">
+                              <span className="text-[10px] font-bold uppercase tracking-wide text-[#A65D37]">
+                                WhatsApp del cliente (si el pedido es anterior)
+                              </span>
+                              <input
+                                type="tel"
+                                inputMode="tel"
+                                value={waTelManual[p.id] ?? ""}
+                                onChange={(e) =>
+                                  setWaTelManual((prev) => ({
+                                    ...prev,
+                                    [p.id]: e.target.value,
+                                  }))
+                                }
+                                placeholder="+54 9 351 …"
+                                className="mt-1 w-full rounded-lg border border-[#2F3E46]/12 bg-white px-2.5 py-2 text-xs text-[#2F3E46] outline-none focus:ring-2 focus:ring-[#53634B]/25"
+                              />
+                            </label>
+                          )}
+                          <label className="mt-2 flex cursor-pointer items-start gap-2 text-left text-[11px] leading-snug text-[#2F3E46]/85">
+                            <input
+                              type="checkbox"
+                              checked={waPedidoModificado[p.id] === true}
+                              onChange={(e) =>
+                                setWaPedidoModificado((prev) => ({
+                                  ...prev,
+                                  [p.id]: e.target.checked,
+                                }))
+                              }
+                              className="mt-0.5 h-4 w-4 shrink-0 accent-[#53634B]"
+                            />
+                            <span>
+                              Incluir aviso de que el pedido fue{" "}
+                              <strong>modificado o ajustado</strong> (texto en el
+                              mensaje)
+                            </span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => abrirWhatsAppAlCliente(p)}
+                            className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border-2 border-[#25d366]/50 bg-[#25d366]/12 py-2.5 font-heading text-[11px] font-bold uppercase tracking-wide text-[#128C7E] transition-colors hover:bg-[#25d366]/20"
+                          >
+                            <span aria-hidden>💬</span>
+                            Enviar mensaje al cliente por WhatsApp
+                          </button>
                         </li>
                       ))}
                     </ul>

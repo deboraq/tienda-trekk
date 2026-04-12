@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut,
   onAuthStateChanged,
   type User,
@@ -148,6 +149,8 @@ export function CuentaClientePanel({ open, onClose }: Props) {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [cargandoPedidos, setCargandoPedidos] = useState(false);
   const [pedidoExpandidoId, setPedidoExpandidoId] = useState<string | null>(null);
+  const [mostrarRecuperar, setMostrarRecuperar] = useState(false);
+  const [recuperarEnviado, setRecuperarEnviado] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -203,6 +206,8 @@ export function CuentaClientePanel({ open, onClose }: Props) {
       setPassword("");
       setPassword2("");
       setPedidoExpandidoId(null);
+      setMostrarRecuperar(false);
+      setRecuperarEnviado(false);
     }
   }, [open]);
 
@@ -220,6 +225,27 @@ export function CuentaClientePanel({ open, onClose }: Props) {
       );
       setPassword("");
       setPassword2("");
+    } catch (err) {
+      console.error(err);
+      setError(mensajeAuth(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRecuperarPassword = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setRecuperarEnviado(false);
+    const mail = email.trim();
+    if (!mail) {
+      setError("Ingresá el email de tu cuenta.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await sendPasswordResetEmail(getFirebaseAuth(), mail);
+      setRecuperarEnviado(true);
     } catch (err) {
       console.error(err);
       setError(mensajeAuth(err));
@@ -336,7 +362,57 @@ export function CuentaClientePanel({ open, onClose }: Props) {
                 etc.).
               </p>
 
-              {modo === "login" ? (
+              {modo === "login" && mostrarRecuperar ? (
+                <form
+                  onSubmit={handleRecuperarPassword}
+                  className="space-y-4 rounded-2xl border border-[#2F3E46]/10 bg-white p-5 shadow-sm"
+                >
+                  <p className="text-xs leading-relaxed text-[#2F3E46]/75">
+                    Te enviamos un enlace a tu correo para elegir una contraseña nueva (revisá también spam).
+                  </p>
+                  <label className="block">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
+                      Email de la cuenta
+                    </span>
+                    <input
+                      type="email"
+                      autoComplete="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className={inputClass}
+                      required
+                    />
+                  </label>
+                  {recuperarEnviado && (
+                    <p className="rounded-xl border border-[#53634B]/25 bg-[#53634B]/10 px-3 py-2 text-xs text-[#2F3E46]">
+                      Si ese email está registrado, vas a recibir un enlace para restablecer la contraseña.
+                    </p>
+                  )}
+                  {error && (
+                    <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">
+                      {error}
+                    </p>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full rounded-xl bg-[#53634B] py-3.5 font-heading text-sm font-bold uppercase tracking-wide text-white shadow-md transition-opacity hover:bg-[#3d4a38] disabled:opacity-55"
+                  >
+                    {loading ? "Enviando…" : "Enviar enlace"}
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full text-center font-heading text-xs font-bold uppercase tracking-wide text-[#A65D37] underline-offset-2 hover:underline"
+                    onClick={() => {
+                      setMostrarRecuperar(false);
+                      setError(null);
+                      setRecuperarEnviado(false);
+                    }}
+                  >
+                    Volver al inicio de sesión
+                  </button>
+                </form>
+              ) : modo === "login" ? (
                 <form
                   onSubmit={handleLogin}
                   className="space-y-4 rounded-2xl border border-[#2F3E46]/10 bg-white p-5 shadow-sm"
@@ -378,6 +454,17 @@ export function CuentaClientePanel({ open, onClose }: Props) {
                     className="w-full rounded-xl bg-[#53634B] py-3.5 font-heading text-sm font-bold uppercase tracking-wide text-white shadow-md transition-opacity hover:bg-[#3d4a38] disabled:opacity-55"
                   >
                     {loading ? "Entrando…" : "Entrar"}
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full text-center font-heading text-xs font-semibold text-[#53634B] underline-offset-2 hover:underline"
+                    onClick={() => {
+                      setMostrarRecuperar(true);
+                      setError(null);
+                      setRecuperarEnviado(false);
+                    }}
+                  >
+                    ¿Olvidaste tu contraseña?
                   </button>
                 </form>
               ) : (
@@ -544,6 +631,14 @@ export function CuentaClientePanel({ open, onClose }: Props) {
                           <p className="mt-2 border-t border-[#2F3E46]/8 pt-2 text-sm font-bold text-[#A65D37]">
                             Total: ${p.total.toLocaleString("es-AR")}
                           </p>
+                          {p.clientPhone && (
+                            <p className="mt-1 text-[11px] text-[#2F3E46]/65">
+                              Contacto WhatsApp registrado:{" "}
+                              <span className="font-mono text-[#2F3E46]">
+                                +{p.clientPhone}
+                              </span>
+                            </p>
+                          )}
 
                           {expandido && (
                             <div className="mt-4 rounded-xl border border-[#2F3E46]/10 bg-[#F2EBD3]/25 p-3">
