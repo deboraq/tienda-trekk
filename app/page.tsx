@@ -12,13 +12,21 @@ import { AdminTiendaPanel } from "./components/AdminTiendaPanel";
 import { CuentaClientePanel } from "./components/CuentaClientePanel";
 import { crearPedidoDesdeCarrito } from "./lib/pedidos";
 import {
+  WHATSAPP_NUMERO_TIENDA,
+  normalizarTelefonoWa,
+} from "./lib/whatsapp";
+import {
   cargarConfigSitio,
   CATEGORIAS_DEFAULT_SIN_TODOS,
   TEXTO_LED_DEFAULT,
 } from "./lib/site-config";
 import { esCatalogAdminEmail } from "./lib/catalog-admin";
-
-const NUMERO_WHATSAPP = "5493515416836";
+import {
+  etiquetaStockVitrina,
+  puedeAgregarUnidad,
+  productoSinStock,
+  stockDesdeFirestore,
+} from "./lib/product-stock";
 
 const SEGMENTOS_LED_MARQUEE = 6;
 
@@ -57,6 +65,9 @@ export default function Home() {
   const [finalizandoPedido, setFinalizandoPedido] = useState(false);
   /** Aviso en el panel del carrito (evita alert() y deja el botón listo de nuevo al instante). */
   const [avisoCheckout, setAvisoCheckout] = useState<string | null>(null);
+  const [avisoCarrito, setAvisoCarrito] = useState<string | null>(null);
+  /** WhatsApp de contacto (obligatorio al enviar pedido). */
+  const [telefonoCheckout, setTelefonoCheckout] = useState("");
   const inputBusquedaCatalogRef = useRef<HTMLInputElement>(null);
 
   const categoriasParaProducto = categoriasMenu.filter((c) => c !== "Todos");
@@ -102,6 +113,7 @@ export default function Home() {
           price: Number(d.price) ?? 0,
           image: d.image ?? "",
           category: d.category,
+          stock: stockDesdeFirestore(d.stock),
         };
       });
       setProductos(docs);
@@ -123,10 +135,38 @@ export default function Home() {
     cargarProductos();
   }, [cargarProductos]);
 
+  /** Si el admin baja el stock, ajustar cantidades en carrito. */
+  useEffect(() => {
+    setCarrito((prev) => {
+      let changed = false;
+      const next = prev
+        .map((item) => {
+          const p = productos.find((pr) => pr.id === item.product.id);
+          const limite = p?.stock;
+          if (typeof limite === "number" && item.quantity > limite) {
+            changed = true;
+            return { ...item, quantity: limite, product: p ?? item.product };
+          }
+          return item;
+        })
+        .filter((i) => i.quantity > 0);
+      return changed ? next : prev;
+    });
+  }, [productos]);
+
   useEffect(() => {
     const auth = getFirebaseAuth();
     const unsub = onAuthStateChanged(auth, setUsuarioTienda);
     return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    try {
+      const g = localStorage.getItem("sn_wa_checkout");
+      if (g) setTelefonoCheckout(g);
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   // Al pasar al catálogo escribiendo en el buscador, enfocar el input del catálogo para seguir escribiendo sin clic
@@ -150,6 +190,16 @@ export default function Home() {
   const productosDestacados = productos.slice(0, 3);
 
   const agregarAlCarrito = (producto: Product) => {
+    const enCarrito = carrito.find((i) => i.product.id === producto.id)?.quantity ?? 0;
+    if (!puedeAgregarUnidad(producto, enCarrito)) {
+      setAvisoCarrito(
+        productoSinStock(producto)
+          ? "Este producto no tiene stock disponible."
+          : "Llegaste al máximo de unidades disponibles."
+      );
+      window.setTimeout(() => setAvisoCarrito(null), 4000);
+      return;
+    }
     setCarrito((prev) => {
       const existe = prev.find((i) => i.product.id === producto.id);
       if (existe) {
@@ -173,15 +223,22 @@ export default function Home() {
   };
 
   const cambiarCantidad = (productId: string, delta: number) => {
-    setCarrito((prev) =>
-      prev
+    setCarrito((prev) => {
+      const item = prev.find((i) => i.product.id === productId);
+      if (!item) return prev;
+      const p = productos.find((pr) => pr.id === productId) ?? item.product;
+      let nueva = item.quantity + delta;
+      if (delta > 0 && typeof p.stock === "number" && nueva > p.stock) {
+        setAvisoCarrito("No hay más unidades disponibles de este producto.");
+        window.setTimeout(() => setAvisoCarrito(null), 3500);
+        nueva = p.stock;
+      }
+      return prev
         .map((i) =>
-          i.product.id === productId
-            ? { ...i, quantity: Math.max(0, i.quantity + delta) }
-            : i
+          i.product.id === productId ? { ...i, quantity: nueva, product: p } : i
         )
-        .filter((i) => i.quantity > 0)
-    );
+        .filter((i) => i.quantity > 0);
+    });
   };
 
   const totalPrecio = carrito.reduce(
@@ -192,6 +249,27 @@ export default function Home() {
 
   const finalizarPedido = async () => {
     if (carrito.length === 0) return;
+    const telNorm = normalizarTelefonoWa(telefonoCheckout);
+    if (!telNorm) {
+      setAvisoCheckout(
+        "Ingresá un número de WhatsApp válido (incluí código de área, ej. +54 9 351 …)."
+      );
+      return;
+    }
+    try {
+      localStorage.setItem("sn_wa_checkout", telefonoCheckout.trim());
+    } catch {
+      /* ignore */
+    }
+    for (const item of carrito) {
+      const p = productos.find((pr) => pr.id === item.product.id) ?? item.product;
+      if (typeof p.stock === "number" && item.quantity > p.stock) {
+        setAvisoCheckout(
+          "Hay productos con cantidad mayor al stock disponible. Revisá el carrito."
+        );
+        return;
+      }
+    }
     const listaProductos = carrito
       .map(
         (item) =>
@@ -209,7 +287,12 @@ export default function Home() {
     if (u) {
       setFinalizandoPedido(true);
       try {
-        refPedido = await crearPedidoDesdeCarrito(u, carrito, totalPrecio);
+        refPedido = await crearPedidoDesdeCarrito(
+          u,
+          carrito,
+          totalPrecio,
+          telNorm
+        );
         setCarrito([]);
       } catch (e) {
         console.error(e);
@@ -232,9 +315,10 @@ export default function Home() {
     const refBloque = refPedido
       ? `\n\n*Referencia web (seguimiento en Mi cuenta):*\n${refPedido}`
       : "";
+    const contactoBloque = `\n\n*Mi WhatsApp:*\n+${telNorm}`;
     const mensaje =
-      `¡Hola! Quiero realizar un pedido en *Sangre Nómade Adventure*:\n\n${listaProductos}\n\n*Total: $${totalPrecio}*${refBloque}\n\n¿Cómo coordinamos el pago?`;
-    const urlWa = `https://wa.me/${NUMERO_WHATSAPP}?text=${encodeURIComponent(mensaje)}`;
+      `¡Hola! Quiero realizar un pedido en *Sangre Nómade Adventure*:\n\n${listaProductos}\n\n*Total: $${totalPrecio}*${refBloque}${contactoBloque}\n\n¿Cómo coordinamos el pago?`;
+    const urlWa = `https://wa.me/${WHATSAPP_NUMERO_TIENDA}?text=${encodeURIComponent(mensaje)}`;
 
     if (pestañaWa) {
       pestañaWa.location.href = urlWa;
@@ -244,10 +328,31 @@ export default function Home() {
   };
 
   const abrirWhatsAppAsesoramiento = () => {
-    const mensaje =
-      "¡Hola! Me interesa *asesoramiento* sobre equipo de trekking (talles, disponibilidad o una salida puntual).";
-    window.open(`https://wa.me/${NUMERO_WHATSAPP}?text=${encodeURIComponent(mensaje)}`, "_blank");
+    const mensaje = "¡Hola Sangre Nómade! Tengo una consulta sobre...";
+    window.open(
+      `https://wa.me/${WHATSAPP_NUMERO_TIENDA}?text=${encodeURIComponent(mensaje)}`,
+      "_blank"
+    );
   };
+
+  /** Cierra catálogo, menú móvil y sube al inicio (el botón Inicio antes no hacía scroll). */
+  const irAlInicio = useCallback(() => {
+    setVerTienda(false);
+    setMenuMovilAbierto(false);
+    window.setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }, 80);
+  }, []);
+
+  const irASeccion = useCallback((id: "nosotros" | "contacto") => {
+    setVerTienda(false);
+    setMenuMovilAbierto(false);
+    window.setTimeout(() => {
+      document
+        .getElementById(id)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+  }, []);
 
   return (
     <main className="min-h-screen pb-20 font-sans text-[#2F3E46]" style={{ backgroundColor: brand.cream }}>
@@ -263,7 +368,8 @@ export default function Home() {
           {/* Logo (izquierda) */}
           <div className="z-10 flex shrink-0 items-center gap-3">
             <button
-              onClick={() => { setVerTienda(false); setMenuMovilAbierto(false); }}
+              type="button"
+              onClick={irAlInicio}
               className="flex items-center gap-2 md:gap-3 text-left font-bold font-heading whitespace-nowrap"
             >
               <Image
@@ -296,14 +402,22 @@ export default function Home() {
           {/* Centro: ocupa el espacio libre para no chocar con Mi cuenta / carrito (solo escritorio) */}
           <div className="hidden min-h-10 min-w-0 flex-1 items-center justify-center md:flex">
             <div className="flex max-w-full flex-wrap justify-center gap-x-5 gap-y-1 text-sm font-medium font-heading uppercase tracking-widest lg:gap-x-6 lg:text-base">
-              <button onClick={() => setVerTienda(false)} className="transition-colors hover:text-[#e8c9a8]">
+              <button
+                type="button"
+                onClick={irAlInicio}
+                className="transition-colors hover:text-[#e8c9a8] uppercase"
+              >
                 Inicio
               </button>
-              <a href="#nosotros" onClick={() => setVerTienda(false)} className="transition-colors hover:text-[#e8c9a8]">
+              <a
+                href="#nosotros"
+                onClick={(e) => {
+                  e.preventDefault();
+                  irASeccion("nosotros");
+                }}
+                className="transition-colors hover:text-[#e8c9a8]"
+              >
                 Nosotros
-              </a>
-              <a href="#rutas-guias" onClick={() => setVerTienda(false)} className="transition-colors hover:text-[#e8c9a8]">
-                Rutas y guías
               </a>
               <div className="relative">
                 <button
@@ -332,7 +446,14 @@ export default function Home() {
                   </div>
                 )}
               </div>
-              <a href="#contacto" className="transition-colors hover:text-[#e8c9a8]">
+              <a
+                href="#contacto"
+                onClick={(e) => {
+                  e.preventDefault();
+                  irASeccion("contacto");
+                }}
+                className="transition-colors hover:text-[#e8c9a8]"
+              >
                 Contacto
               </a>
             </div>
@@ -429,11 +550,44 @@ export default function Home() {
                 )}
               </div>
             )}
-            <button onClick={() => { setVerTienda(false); setMenuMovilAbierto(false); }} className="text-left py-2 hover:text-[#e8c9a8]">Inicio</button>
-            <a href="#nosotros" onClick={() => setMenuMovilAbierto(false)} className="py-2 hover:text-[#e8c9a8]">Nosotros</a>
-            <a href="#rutas-guias" onClick={() => setMenuMovilAbierto(false)} className="block py-2 hover:text-[#e8c9a8]">Rutas y guías</a>
-            <button onClick={() => { setVerTienda(true); setCategoriaSeleccionada("Todos"); setMenuMovilAbierto(false); }} className="text-left py-2 hover:text-[#e8c9a8]">Ver equipamiento</button>
-            <a href="#contacto" onClick={() => setMenuMovilAbierto(false)} className="py-2 hover:text-[#e8c9a8]">Contacto</a>
+            <button
+              type="button"
+              onClick={irAlInicio}
+              className="text-left py-2 uppercase tracking-widest hover:text-[#e8c9a8]"
+            >
+              Inicio
+            </button>
+            <a
+              href="#nosotros"
+              onClick={(e) => {
+                e.preventDefault();
+                irASeccion("nosotros");
+              }}
+              className="py-2 hover:text-[#e8c9a8]"
+            >
+              Nosotros
+            </a>
+            <button
+              type="button"
+              onClick={() => {
+                setVerTienda(true);
+                setCategoriaSeleccionada("Todos");
+                setMenuMovilAbierto(false);
+              }}
+              className="text-left py-2 hover:text-[#e8c9a8]"
+            >
+              Ver equipamiento
+            </button>
+            <a
+              href="#contacto"
+              onClick={(e) => {
+                e.preventDefault();
+                irASeccion("contacto");
+              }}
+              className="py-2 hover:text-[#e8c9a8]"
+            >
+              Contacto
+            </a>
             <button
               type="button"
               onClick={() => {
@@ -517,13 +671,22 @@ export default function Home() {
                       <span className="w-7 text-center font-heading font-bold text-[#2F3E46]">{item.quantity}</span>
                       <button
                         type="button"
-                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#2F3E46]/12 bg-[#F2EBD3]/40 text-[#2F3E46] transition-colors hover:bg-[#F2EBD3]"
+                        disabled={
+                          typeof item.product.stock === "number" &&
+                          item.quantity >= item.product.stock
+                        }
+                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#2F3E46]/12 bg-[#F2EBD3]/40 text-[#2F3E46] transition-colors hover:bg-[#F2EBD3] disabled:cursor-not-allowed disabled:opacity-35"
                         onClick={() => cambiarCantidad(item.product.id, 1)}
                         aria-label="Sumar uno"
                       >
                         +
                       </button>
                     </div>
+                    {typeof item.product.stock === "number" && (
+                      <p className="mt-1 text-[10px] text-[#2F3E46]/45">
+                        Máx. {item.product.stock} u. en stock
+                      </p>
+                    )}
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
                     <span className="font-heading font-bold text-[#53634B]">
@@ -552,6 +715,25 @@ export default function Home() {
                   ${totalPrecio.toLocaleString("es-AR")}
                 </p>
               </div>
+              <label className="mb-3 block text-left">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
+                  Tu WhatsApp <span className="text-red-700">*</span>
+                </span>
+                <input
+                  type="tel"
+                  autoComplete="tel"
+                  inputMode="tel"
+                  value={telefonoCheckout}
+                  onChange={(e) => setTelefonoCheckout(e.target.value)}
+                  placeholder="Ej. +54 9 351 123-4567"
+                  className="mt-1.5 w-full rounded-xl border border-[#2F3E46]/12 bg-white px-3.5 py-2.5 text-sm text-[#2F3E46] shadow-sm outline-none placeholder:text-[#2F3E46]/35 focus:border-[#53634B] focus:ring-2 focus:ring-[#53634B]/20"
+                />
+                <span className="mt-1 block text-[10px] leading-snug text-[#2F3E46]/55">
+                  {usuarioTienda
+                    ? "Lo guardamos con tu pedido para que podamos escribirte desde la tienda."
+                    : "Obligatorio: lo incluimos en el mensaje a la tienda para que tengan tu contacto."}
+                </span>
+              </label>
               {avisoCheckout && (
                 <div
                   className="mb-3 rounded-2xl border border-[#A65D37]/30 bg-[#fdf6f0] px-3 py-3 text-xs leading-relaxed text-[#5c3319]"
@@ -560,13 +742,9 @@ export default function Home() {
                   {avisoCheckout}
                 </div>
               )}
-              {usuarioTienda ? (
+              {!usuarioTienda && (
                 <p className="mb-3 text-xs leading-relaxed text-[#2F3E46]/65">
-                  Con sesión iniciada, el pedido puede quedar guardado para ver el estado en «Mi cuenta».
-                </p>
-              ) : (
-                <p className="mb-3 text-xs leading-relaxed text-[#2F3E46]/65">
-                  ¿Seguimiento del pedido? Entrá con «Entrar / Registro» antes de enviar.
+                  Para que el pedido quede en la nube y lo sigas después, usá «Entrar / Registro» antes de enviar.
                 </p>
               )}
               <button
@@ -577,11 +755,28 @@ export default function Home() {
               >
                 {finalizandoPedido ? "Guardando…" : "Enviar por WhatsApp"}
               </button>
-              <p className="mt-2 text-center text-[10px] text-[#2F3E46]/45">
-                Se abre WhatsApp con tu pedido; coordinás pago y envío ahí.
-              </p>
+              <div className="mt-3 space-y-2">
+                <p className="text-center text-xs leading-relaxed text-[#2F3E46]/85">
+                  <span className="font-semibold text-[#2F3E46]">Te respondemos por WhatsApp.</span>
+                  {usuarioTienda
+                    ? " Podés seguir el pedido en «Mi cuenta»."
+                    : " Si entrás con tu cuenta antes de enviar, también podés seguirlo en «Mi cuenta»."}
+                </p>
+                <p className="text-center text-[10px] text-[#2F3E46]/45">
+                  Se abre WhatsApp con tu pedido; coordinás pago y envío ahí.
+                </p>
+              </div>
             </>
           )}
+        </div>
+      )}
+
+      {avisoCarrito && (
+        <div
+          role="status"
+          className="fixed bottom-24 left-1/2 z-[225] max-w-sm -translate-x-1/2 rounded-2xl border border-[#2F3E46]/15 bg-[#fefdfb] px-4 py-3 text-center text-sm text-[#2F3E46] shadow-[0_12px_40px_-12px_rgba(47,62,70,0.35)] md:bottom-10"
+        >
+          {avisoCarrito}
         </div>
       )}
 
@@ -668,9 +863,11 @@ export default function Home() {
           </div>
 
           <section className="border-y border-[#A65D37]/30 bg-[#ddd0bc] py-12 text-center">
-            <h3 className="mb-2 font-heading text-2xl font-bold uppercase tracking-wide text-[#2F3E46]">Tu próxima cima</h3>
+            <h3 className="mb-2 font-heading text-2xl font-bold uppercase tracking-wide text-[#2F3E46]">
+              Expertos en el terreno, nómades por instinto
+            </h3>
             <p className="text-[#2F3E46]/80 px-4 max-w-lg mx-auto">
-              No vendemos solo una bota: te acercamos a la cima que esa bota permite alcanzar. Consultá talles, stock o el kit según tu ruta — fin de semana o técnica
+              Escribinos para consultar talles, stock, envíos o recomendaciones de equipo según tu próxima ruta
             </p>
             <button
               onClick={abrirWhatsAppAsesoramiento}
@@ -686,35 +883,59 @@ export default function Home() {
             <p className="text-xs uppercase tracking-[0.2em] text-[#A65D37] font-heading mb-2">Pack aventura · Próximamente kits completos</p>
             <h3 className="mb-10 font-heading text-3xl font-bold uppercase text-[#2F3E46]">Equipamiento destacado</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              {productosDestacados.map((producto) => (
-                <div
-                  key={producto.id}
-                  className="rounded-3xl overflow-hidden border-2 border-[#2F3E46]/15 bg-[#fefdfb] p-4 shadow-[0_12px_36px_-14px_rgba(47,62,70,0.28)] transition-all hover:border-[#53634B]/35 hover:shadow-[0_16px_44px_-12px_rgba(47,62,70,0.32)]"
-                >
+              {productosDestacados.map((producto) => {
+                const q =
+                  carrito.find((i) => i.product.id === producto.id)?.quantity ?? 0;
+                const badge = etiquetaStockVitrina(producto);
+                const noPuede = productoSinStock(producto) || !puedeAgregarUnidad(producto, q);
+                return (
                   <div
-                    role="button"
-                    tabIndex={0}
-                    className="relative h-48 w-full rounded-2xl mb-4 overflow-hidden bg-[#e8e4dc] ring-1 ring-inset ring-[#2F3E46]/10 block w-full cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-[#53634B] focus:ring-offset-2"
-                    onClick={() => producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name })}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name }); } }}
-                    aria-label={`Ver foto ampliada de ${producto.name}`}
+                    key={producto.id}
+                    className="rounded-3xl overflow-hidden border-2 border-[#2F3E46]/15 bg-[#fefdfb] p-4 shadow-[0_12px_36px_-14px_rgba(47,62,70,0.28)] transition-all hover:border-[#53634B]/35 hover:shadow-[0_16px_44px_-12px_rgba(47,62,70,0.32)]"
                   >
-                    <Image
-                      src={producto.image}
-                      alt={producto.name}
-                      fill
-                      className="object-cover pointer-events-none"
-                      sizes="(max-width:768px) 100vw, 33vw"
-                      unoptimized
-                      referrerPolicy="no-referrer"
-                    />
-                    <span className="absolute inset-0 flex items-end justify-center pb-2 text-white text-sm font-medium bg-gradient-to-t from-black/50 to-transparent opacity-0 hover:opacity-100 transition-opacity">Ver más grande</span>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      className="relative h-48 w-full rounded-2xl mb-4 overflow-hidden bg-[#e8e4dc] ring-1 ring-inset ring-[#2F3E46]/10 block w-full cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-[#53634B] focus:ring-offset-2"
+                      onClick={() => producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name })}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name }); } }}
+                      aria-label={`Ver foto ampliada de ${producto.name}`}
+                    >
+                      <Image
+                        src={producto.image}
+                        alt={producto.name}
+                        fill
+                        className="object-cover pointer-events-none"
+                        sizes="(max-width:768px) 100vw, 33vw"
+                        unoptimized
+                        referrerPolicy="no-referrer"
+                      />
+                      <span className="absolute inset-0 flex items-end justify-center pb-2 text-white text-sm font-medium bg-gradient-to-t from-black/50 to-transparent opacity-0 hover:opacity-100 transition-opacity">Ver más grande</span>
+                    </div>
+                    <h4 className="text-xl font-bold">{producto.name}</h4>
+                    <p className="text-2xl font-black text-[#53634B] my-4">${(producto.price ?? 0).toLocaleString("es-AR")}</p>
+                    {badge && (
+                      <p
+                        className={`mb-2 text-xs font-semibold ${productoSinStock(producto) ? "text-red-700" : "text-[#53634B]"}`}
+                      >
+                        {badge}
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      disabled={noPuede}
+                      onClick={() => agregarAlCarrito(producto)}
+                      className={`w-full rounded-xl py-2 font-bold transition-all ${
+                        noPuede
+                          ? "cursor-not-allowed bg-[#2F3E46]/25 text-white"
+                          : "bg-[#53634B] text-white active:scale-95"
+                      }`}
+                    >
+                      {productoSinStock(producto) ? "Sin stock" : "Agregar al Carrito"}
+                    </button>
                   </div>
-                  <h4 className="text-xl font-bold">{producto.name}</h4>
-                  <p className="text-2xl font-black text-[#53634B] my-4">${(producto.price ?? 0).toLocaleString("es-AR")}</p>
-                  <button onClick={() => agregarAlCarrito(producto)} className="w-full bg-[#53634B] text-white py-2 rounded-xl font-bold active:scale-95 transition-all">Agregar al Carrito</button>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <button 
               onClick={() => setVerTienda(true)}
@@ -729,7 +950,7 @@ export default function Home() {
             <div className="max-w-4xl mx-auto text-center">
               <h3 className="text-4xl font-heading font-bold mb-8 uppercase tracking-wide">Nuestra esencia</h3>
               <p className="text-xl md:text-2xl leading-relaxed opacity-95 italic font-light px-4">
-                En Sangre Nómade somos eseller multimarcas: seleccionamos calzado, capas y accesorios de referencias como Columbia, Ansilta, Lippi o Doite, con el criterio de quien prueba en terreno. Valientes, auténticos y conectados con la naturaleza — desde Córdoba, para quien camina para encontrarse.
+                Sangre Nómada nace en Córdoba, Argentina. Combinamos la precisión técnica con la pasión auténtica de quienes viven bajo las estrellas. Seleccionamos cada calzado y accesorio con el rigor de quien prueba cada costura en el terreno, para ofrecerte equipo de alta resistencia que asegure que nada te detenga en la ruta.
               </p>
             </div>
           </section>
@@ -737,8 +958,12 @@ export default function Home() {
       ) : (
         <section id="productos" className="max-w-6xl mx-auto p-4 pt-16 min-h-screen">
           <div className="flex flex-col md:flex-row justify-between items-center mb-12 gap-4">
-            <button onClick={() => setVerTienda(false)} className="text-[#53634B] font-bold flex items-center gap-2 hover:underline shrink-0">
-              <span>←</span> Volver al inicio
+            <button
+              type="button"
+              onClick={irAlInicio}
+              className="shrink-0 flex items-center gap-2 font-heading font-bold uppercase tracking-wide text-[#53634B] hover:underline"
+            >
+              <span aria-hidden>←</span> Volver al inicio
             </button>
             <div className="relative w-full md:w-80">
               <span className="absolute inset-y-0 left-3 flex items-center text-gray-400 pointer-events-none">🔍</span>
@@ -797,8 +1022,37 @@ export default function Home() {
                     <h4 className="text-xl font-bold mb-2">{producto.name}</h4>
                     <p className="text-gray-500 text-sm mb-4">{producto.description}</p>
                     <p className="text-3xl font-black text-[#53634B] mb-6">${(producto.price ?? 0).toLocaleString("es-AR")}</p>
+                    {(() => {
+                      const q =
+                        carrito.find((i) => i.product.id === producto.id)?.quantity ?? 0;
+                      const badge = etiquetaStockVitrina(producto);
+                      const noPuede =
+                        productoSinStock(producto) || !puedeAgregarUnidad(producto, q);
+                      return (
+                        <>
+                          {badge && (
+                            <p
+                              className={`mb-3 text-xs font-semibold ${productoSinStock(producto) ? "text-red-700" : "text-[#53634B]"}`}
+                            >
+                              {badge}
+                            </p>
+                          )}
+                          <button
+                            type="button"
+                            disabled={noPuede}
+                            onClick={() => agregarAlCarrito(producto)}
+                            className={`w-full rounded-2xl py-3 font-bold shadow-md transition-all ${
+                              noPuede
+                                ? "cursor-not-allowed bg-[#2F3E46]/25 text-white"
+                                : "bg-[#53634B] text-white active:scale-95"
+                            }`}
+                          >
+                            {productoSinStock(producto) ? "Sin stock" : "Agregar al Carrito"}
+                          </button>
+                        </>
+                      );
+                    })()}
                   </div>
-                  <button onClick={() => agregarAlCarrito(producto)} className="w-full bg-[#53634B] text-white py-3 rounded-2xl font-bold shadow-md active:scale-95 transition-all">Agregar al Carrito</button>
                 </div>
               </div>
             ))}
@@ -906,49 +1160,6 @@ export default function Home() {
           </div>
         </div>
       )}
-
-      {/* SEO local / contenido futuro: rutas y guías */}
-      <section
-        id="rutas-guias"
-        className="max-w-5xl mx-auto px-6 py-16 border-t-2 border-[#2F3E46]/15"
-      >
-        <div className="rounded-3xl border-2 border-[#2F3E46]/25 bg-white/80 p-8 md:p-12 shadow-sm">
-          <div className="flex flex-col md:flex-row gap-8 items-start">
-            <div
-              className="shrink-0 w-20 h-20 rounded-full border-2 border-[#2F3E46]/30 flex items-center justify-center bg-[#F2EBD3]"
-              aria-hidden
-            >
-              <svg viewBox="0 0 64 64" className="w-12 h-12 text-[#A65D37]" fill="currentColor">
-                <path d="M32 4L36 24h8L38 32l6 20-12-12-12 12 6-20-6-8h8z" opacity="0.35" />
-                <path d="M32 8l3 14h-6L32 8zm0 22v30M32 12l-4 18h8L32 12z" fill="#2F3E46" />
-                <circle cx="32" cy="32" r="28" fill="none" stroke="#2F3E46" strokeWidth="2" opacity="0.4" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-2xl md:text-3xl font-heading font-bold uppercase tracking-wide text-[#2F3E46] mb-3">
-                Rutas y guías
-              </h2>
-              <p className="text-[#2F3E46]/85 leading-relaxed mb-4">
-                Estamos armando contenido para posicionarnos en búsquedas locales: calzado para El Chaltén, qué llevar en la mochila para Torres del Paine, capas para clima patagónico y más. En el trekking digital no vendemos solo un producto: vendemos la cima que ese equipo te permite alcanzar.
-              </p>
-              <ul className="text-sm text-[#53634B] space-y-2 list-none">
-                <li className="flex gap-2">
-                  <span className="text-[#A65D37]" aria-hidden>
-                    ★
-                  </span>
-                  Próximas publicaciones: guías por destino y comparativas multimarcas.
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-[#A65D37]" aria-hidden>
-                    ★
-                  </span>
-                  Si tenés una ruta en mente, pedinos tema por WhatsApp y lo sumamos a la lista.
-                </li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </section>
 
       {/* FOOTER */}
       <footer id="contacto" className="bg-[#F2EBD3]/50 border-t-2 border-[#2F3E46]/10 py-16 px-6">

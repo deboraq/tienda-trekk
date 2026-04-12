@@ -31,6 +31,8 @@ service cloud.firestore {
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.userEmail is string
         && request.resource.data.userEmail.size() <= 320
+        && request.resource.data.clientPhone is string
+        && request.resource.data.clientPhone.matches('^[0-9]{10,15}$')
         && request.resource.data.status == 'recibido'
         && request.resource.data.items is list
         && request.resource.data.items.size() > 0
