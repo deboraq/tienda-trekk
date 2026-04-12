@@ -462,14 +462,16 @@ export default function Home() {
           </div>
 
           {/* Derecha: ancho fijo = buscador; fila superior ocupa el mismo ancho (dos columnas iguales) */}
-          <div className="z-10 ml-auto flex w-full max-w-md shrink-0 flex-col gap-2 md:w-[14rem] md:max-w-none lg:w-[15.5rem]">
+          <div className="z-10 ml-auto flex w-full max-w-md shrink-0 flex-col gap-2 md:w-[20rem] md:max-w-none lg:w-[22rem]">
             <div className="grid w-full grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => setMostrarCuentaCliente(true)}
-                className="flex h-10 min-w-0 items-center justify-center rounded-full border border-[#2F3E46]/12 bg-[#F2EBD3] px-2 font-heading text-[10px] font-bold uppercase tracking-wide text-[#2F3E46] shadow-sm transition-all hover:border-[#A65D37]/35 hover:bg-[#e8dfc8] active:scale-[0.98] sm:text-[11px] sm:px-3"
+                className="flex h-10 min-w-0 items-center justify-center rounded-full border border-[#2F3E46]/12 bg-[#F2EBD3] px-2 font-heading text-[9px] font-bold uppercase tracking-wide text-[#2F3E46] shadow-sm transition-all hover:border-[#A65D37]/35 hover:bg-[#e8dfc8] active:scale-[0.98] sm:text-[10px] sm:px-2.5 md:text-[11px] md:px-3"
               >
-                <span className="truncate">{usuarioTienda ? "Mi cuenta" : "Entrar / Registro"}</span>
+                <span className="text-center leading-tight">
+                  {usuarioTienda ? "Mi cuenta" : "Iniciar sesión"}
+                </span>
               </button>
               <button
                 type="button"
@@ -598,7 +600,7 @@ export default function Home() {
               }}
               className="text-left py-2 hover:text-[#e8c9a8]"
             >
-              {usuarioTienda ? "Mi cuenta" : "Entrar / Registro"}
+              {usuarioTienda ? "Mi cuenta" : "Iniciar sesión"}
             </button>
             <div className="pt-2 border-t border-white/20">
               <p className="text-xs normal-case opacity-80 mb-2">Productos por categoría</p>
@@ -746,7 +748,7 @@ export default function Home() {
               )}
               {!usuarioTienda && (
                 <p className="mb-3 text-xs leading-relaxed text-[#2F3E46]/65">
-                  Para que el pedido quede en la nube y lo sigas después, usá «Entrar / Registro» antes de enviar.
+                  Para que el pedido quede en la nube y lo sigas después, usá «Iniciar sesión» antes de enviar.
                 </p>
               )}
               <button
@@ -952,7 +954,7 @@ export default function Home() {
             <div className="max-w-4xl mx-auto text-center">
               <h3 className="text-4xl font-heading font-bold mb-8 uppercase tracking-wide">Nuestra esencia</h3>
               <p className="text-xl md:text-2xl leading-relaxed opacity-95 italic font-light px-4">
-                Sangre Nómada nace en Córdoba, Argentina. Combinamos la precisión técnica con la pasión auténtica de quienes viven bajo las estrellas. Seleccionamos cada calzado y accesorio con el rigor de quien prueba cada costura en el terreno, para ofrecerte equipo de alta resistencia que asegure que nada te detenga en la ruta.
+                Sangre Nómada nace en Córdoba, Argentina. Combinamos la precisión técnica con la pasión auténtica de quienes han dormido bajo las estrellas. Seleccionamos cada calzado y accesorio con el rigor de quien prueba cada costura en el terreno, para ofrecerte equipo de alta resistencia que asegure que nada te detenga en la ruta.
               </p>
             </div>
           </section>
