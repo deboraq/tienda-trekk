@@ -14,6 +14,7 @@ import { crearPedidoDesdeCarrito } from "./lib/pedidos";
 import {
   WHATSAPP_NUMERO_TIENDA,
   normalizarTelefonoWa,
+  urlWhatsAppTiendaConsultaGeneral,
 } from "./lib/whatsapp";
 import {
   cargarConfigSitio,
@@ -328,11 +329,7 @@ export default function Home() {
   };
 
   const abrirWhatsAppAsesoramiento = () => {
-    const mensaje = "¡Hola Sangre Nómade! Tengo una consulta sobre...";
-    window.open(
-      `https://wa.me/${WHATSAPP_NUMERO_TIENDA}?text=${encodeURIComponent(mensaje)}`,
-      "_blank"
-    );
+    window.open(urlWhatsAppTiendaConsultaGeneral(), "_blank", "noopener,noreferrer");
   };
 
   /** Cierra catálogo, menú móvil y sube al inicio (el botón Inicio antes no hacía scroll). */
@@ -1081,16 +1078,10 @@ export default function Home() {
         <button
           type="button"
           onClick={() => setMostrarFaqModal(true)}
-          className="inline-flex w-full max-w-xl items-center justify-center gap-3 rounded-2xl border-2 border-[#2F3E46]/25 bg-[#A65D37] px-6 py-5 text-base font-heading font-bold uppercase tracking-[0.12em] text-white shadow-[0_12px_40px_-8px_rgba(166,93,55,0.55)] transition-all hover:bg-[#8f4e2f] hover:shadow-[0_16px_44px_-8px_rgba(47,62,70,0.35)] focus:outline-none focus:ring-4 focus:ring-[#A65D37]/40 active:scale-[0.99] md:px-12 md:py-6 md:text-xl"
+          className="inline-flex w-full max-w-xl items-center justify-center rounded-2xl border-2 border-[#2F3E46]/25 bg-[#A65D37] px-6 py-5 text-base font-heading font-bold uppercase tracking-[0.12em] text-white shadow-[0_12px_40px_-8px_rgba(166,93,55,0.55)] transition-all hover:bg-[#8f4e2f] hover:shadow-[0_16px_44px_-8px_rgba(47,62,70,0.35)] focus:outline-none focus:ring-4 focus:ring-[#A65D37]/40 active:scale-[0.99] md:px-12 md:py-6 md:text-xl"
         >
-          <span className="text-2xl md:text-3xl" aria-hidden>
-            ❓
-          </span>
           Preguntas frecuentes
         </button>
-        <p className="mt-4 text-sm text-[#2F3E46]/65">
-          Envíos, pagos y cómo comprar
-        </p>
       </section>
 
       {/* Modal Preguntas Frecuentes */}
@@ -1218,7 +1209,13 @@ export default function Home() {
         onSiteConfigActualizado={refrescarSitio}
       />
       
-      <a href="https://wa.me/5493515416836" target="_blank" rel="noopener noreferrer" className="fixed bottom-6 left-6 bg-[#25d366] text-white p-4 rounded-full shadow-2xl z-[100] hover:scale-110 transition-transform">
+      <a
+        href={urlWhatsAppTiendaConsultaGeneral()}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="fixed bottom-6 left-6 z-[100] rounded-full bg-[#25d366] p-4 text-white shadow-2xl transition-transform hover:scale-110"
+        aria-label="Contactar por WhatsApp"
+      >
         <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
       </a>
     </main>
