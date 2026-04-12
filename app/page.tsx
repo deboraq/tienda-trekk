@@ -1031,12 +1031,12 @@ export default function Home() {
                 return (
                   <div
                     key={producto.id}
-                    className="rounded-3xl overflow-hidden border-2 border-[#2F3E46]/15 bg-[#fefdfb] p-4 shadow-[0_12px_36px_-14px_rgba(47,62,70,0.28)] transition-all hover:border-[#53634B]/35 hover:shadow-[0_16px_44px_-12px_rgba(47,62,70,0.32)]"
+                    className="flex h-full flex-col rounded-3xl overflow-hidden border-2 border-[#2F3E46]/15 bg-[#fefdfb] p-4 shadow-[0_12px_36px_-14px_rgba(47,62,70,0.28)] transition-all hover:border-[#53634B]/35 hover:shadow-[0_16px_44px_-12px_rgba(47,62,70,0.32)]"
                   >
                     <div
                       role="button"
                       tabIndex={0}
-                      className="relative h-48 w-full rounded-2xl mb-4 overflow-hidden bg-[#e8e4dc] ring-1 ring-inset ring-[#2F3E46]/10 block w-full cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-[#53634B] focus:ring-offset-2"
+                      className="relative h-48 w-full shrink-0 rounded-2xl mb-4 overflow-hidden bg-[#e8e4dc] ring-1 ring-inset ring-[#2F3E46]/10 block w-full cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-[#53634B] focus:ring-offset-2"
                       onClick={() => producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name })}
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name }); } }}
                       aria-label={`Ver foto ampliada de ${producto.name}`}
@@ -1052,20 +1052,28 @@ export default function Home() {
                       />
                       <span className="absolute inset-0 flex items-end justify-center pb-2 text-white text-sm font-medium bg-gradient-to-t from-black/50 to-transparent opacity-0 hover:opacity-100 transition-opacity">Ver más grande</span>
                     </div>
-                    <h4 className="text-xl font-bold">{producto.name}</h4>
-                    <p className="text-2xl font-black text-[#53634B] my-4">${(producto.price ?? 0).toLocaleString("es-AR")}</p>
-                    <button
-                      type="button"
-                      disabled={noPuede}
-                      onClick={() => agregarAlCarrito(producto)}
-                      className={`w-full rounded-xl py-2 font-bold transition-all ${
-                        noPuede
-                          ? "cursor-not-allowed bg-[#2F3E46]/25 text-white"
-                          : "bg-[#53634B] text-white active:scale-95"
-                      }`}
-                    >
-                      {productoSinStock(producto) ? "Sin stock" : "Agregar al Carrito"}
-                    </button>
+                    <div className="flex min-h-0 flex-1 flex-col">
+                      <h4 className="line-clamp-2 min-h-[3.5rem] text-xl font-bold">
+                        {producto.name}
+                      </h4>
+                      <div className="mt-auto pt-4">
+                        <p className="text-2xl font-black text-[#53634B] mb-4">
+                          ${(producto.price ?? 0).toLocaleString("es-AR")}
+                        </p>
+                        <button
+                          type="button"
+                          disabled={noPuede}
+                          onClick={() => agregarAlCarrito(producto)}
+                          className={`w-full rounded-xl py-2 font-bold transition-all ${
+                            noPuede
+                              ? "cursor-not-allowed bg-[#2F3E46]/25 text-white"
+                              : "bg-[#53634B] text-white active:scale-95"
+                          }`}
+                        >
+                          {productoSinStock(producto) ? "Sin stock" : "Agregar al Carrito"}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 );
               })}
@@ -1134,12 +1142,12 @@ export default function Home() {
               return (
               <div
                 key={producto.id}
-                className="flex flex-col overflow-hidden rounded-3xl border-2 border-[#2F3E46]/15 bg-[#fefdfb] shadow-[0_12px_36px_-14px_rgba(47,62,70,0.28)] transition-all hover:border-[#53634B]/35 hover:shadow-[0_16px_44px_-12px_rgba(47,62,70,0.32)]"
+                className="flex h-full flex-col overflow-hidden rounded-3xl border-2 border-[#2F3E46]/15 bg-[#fefdfb] shadow-[0_12px_36px_-14px_rgba(47,62,70,0.28)] transition-all hover:border-[#53634B]/35 hover:shadow-[0_16px_44px_-12px_rgba(47,62,70,0.32)]"
               >
                 <div
                   role="button"
                   tabIndex={0}
-                  className="relative h-64 overflow-hidden bg-[#e8e4dc] ring-1 ring-inset ring-[#2F3E46]/10 block w-full cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-[#53634B] focus:ring-offset-2"
+                  className="relative h-64 shrink-0 overflow-hidden bg-[#e8e4dc] ring-1 ring-inset ring-[#2F3E46]/10 block w-full cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-[#53634B] focus:ring-offset-2"
                   onClick={() => producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name })}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); producto.image && setImagenAmpliada({ src: producto.image, alt: producto.name }); } }}
                   aria-label={`Ver foto ampliada de ${producto.name}`}
@@ -1155,11 +1163,15 @@ export default function Home() {
                   />
                   <span className="absolute inset-0 flex items-end justify-center pb-2 text-white text-sm font-medium bg-gradient-to-t from-black/50 to-transparent opacity-0 hover:opacity-100 transition-opacity">Ver más grande</span>
                 </div>
-                <div className="p-6 text-center flex-grow flex flex-col justify-between">
-                  <div>
-                    <h4 className="text-xl font-bold mb-2">{producto.name}</h4>
-                    <p className="text-gray-500 text-sm mb-4">{producto.description}</p>
-                    <p className="text-3xl font-black text-[#53634B] mb-6">${(producto.price ?? 0).toLocaleString("es-AR")}</p>
+                <div className="flex min-h-0 flex-1 flex-col p-6 text-center">
+                  <h4 className="mb-2 line-clamp-2 text-xl font-bold">{producto.name}</h4>
+                  <p className="mb-4 min-h-[3.75rem] flex-1 overflow-hidden text-sm leading-snug text-gray-500 line-clamp-3">
+                    {producto.description || "\u00a0"}
+                  </p>
+                  <div className="mt-auto">
+                    <p className="mb-4 text-3xl font-black text-[#53634B]">
+                      ${(producto.price ?? 0).toLocaleString("es-AR")}
+                    </p>
                     <button
                       type="button"
                       disabled={noPuede}
