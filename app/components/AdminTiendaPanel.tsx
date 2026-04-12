@@ -48,8 +48,12 @@ import {
   cambiarEstadoPedidoConInventario,
   estadoComprometeStock,
 } from "../lib/pedido-inventario";
+import {
+  calcularResumenPedidos,
+  calcularResumenStock,
+} from "../lib/admin-resumen";
 
-type Tab = "portada" | "categorias" | "catalogo" | "pedidos";
+type Tab = "portada" | "categorias" | "catalogo" | "resumen" | "pedidos";
 
 type Props = {
   open: boolean;
@@ -294,6 +298,9 @@ export function AdminTiendaPanel({
   const notifPedidosClienteConfirmo = pedidos.filter(
     pedidoClienteConfirmoNoVistoPorAdmin
   ).length;
+
+  const resumenPedidos = calcularResumenPedidos(pedidos);
+  const resumenStock = calcularResumenStock(productos);
 
   const categoriaSelectValue = categoriasProducto.includes(categoria)
     ? categoria
@@ -898,7 +905,7 @@ export function AdminTiendaPanel({
               </div>
 
               <nav
-                className="mb-5 grid grid-cols-2 gap-1 rounded-2xl border border-[#2F3E46]/10 bg-[#2F3E46]/[0.06] p-1 sm:grid-cols-4"
+                className="mb-5 grid grid-cols-2 gap-1 rounded-2xl border border-[#2F3E46]/10 bg-[#2F3E46]/[0.06] p-1 sm:grid-cols-3 lg:grid-cols-5"
                 role="tablist"
                 aria-label="Secciones"
               >
@@ -946,6 +953,19 @@ export function AdminTiendaPanel({
                 <button
                   type="button"
                   role="tab"
+                  aria-selected={tab === "resumen"}
+                  className={tabBtn("resumen")}
+                  onClick={() => {
+                    setTab("resumen");
+                    setSiteMsg(null);
+                    setPedidoMsg(null);
+                  }}
+                >
+                  Resumen
+                </button>
+                <button
+                  type="button"
+                  role="tab"
                   aria-selected={tab === "pedidos"}
                   className={`relative ${tabBtn("pedidos")}`}
                   onClick={() => {
@@ -980,6 +1000,164 @@ export function AdminTiendaPanel({
                 >
                   {siteMsg}
                 </div>
+              )}
+
+              {tab === "resumen" && (
+                <section className="space-y-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2 rounded-2xl border border-[#2F3E46]/10 bg-white p-4 shadow-sm sm:p-5">
+                    <div>
+                      <h3 className="font-heading text-sm font-bold uppercase tracking-wide text-[#2F3E46]">
+                        Resumen general
+                      </h3>
+                      <p className="mt-1 text-xs leading-relaxed text-[#2F3E46]/65">
+                        Números según el catálogo actual y los últimos pedidos cargados en
+                        esta sesión (hasta 100). Usá «Actualizar» para refrescar.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void cargarPedidosAdmin();
+                        void onCatalogoActualizado();
+                      }}
+                      disabled={cargandoPedidos}
+                      className="shrink-0 rounded-full border-2 border-[#53634B]/35 bg-[#53634B]/10 px-3 py-2 font-heading text-[10px] font-bold uppercase tracking-wider text-[#2F3E46] transition-colors hover:bg-[#53634B]/18 disabled:opacity-50"
+                    >
+                      {cargandoPedidos ? "Actualizando…" : "Actualizar"}
+                    </button>
+                  </div>
+
+                  <div className="rounded-2xl border border-[#53634B]/25 bg-[#53634B]/8 p-4 sm:p-5">
+                    <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[#53634B]">
+                      Inventario (catálogo)
+                    </p>
+                    <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                      <div className="rounded-xl border border-[#2F3E46]/10 bg-white/90 px-3 py-2">
+                        <dt className="text-[#2F3E46]/55">Productos publicados</dt>
+                        <dd className="font-heading text-lg font-bold tabular-nums text-[#2F3E46]">
+                          {resumenStock.totalProductos}
+                        </dd>
+                      </div>
+                      <div className="rounded-xl border border-[#2F3E46]/10 bg-white/90 px-3 py-2">
+                        <dt className="text-[#2F3E46]/55">Unidades con tope (suma)</dt>
+                        <dd className="font-heading text-lg font-bold tabular-nums text-[#2F3E46]">
+                          {resumenStock.conLimite.unidades.toLocaleString("es-AR")}
+                        </dd>
+                      </div>
+                      <div className="rounded-xl border border-[#2F3E46]/10 bg-white/90 px-3 py-2">
+                        <dt className="text-[#2F3E46]/55">Con stock controlado</dt>
+                        <dd className="font-semibold text-[#2F3E46]">
+                          {resumenStock.conLimite.productos} producto(s)
+                        </dd>
+                      </div>
+                      <div className="rounded-xl border border-[#2F3E46]/10 bg-white/90 px-3 py-2">
+                        <dt className="text-[#2F3E46]/55">Sin tope en la web</dt>
+                        <dd className="font-semibold text-[#2F3E46]">
+                          {resumenStock.sinLimite} producto(s)
+                        </dd>
+                      </div>
+                      <div className="rounded-xl border border-[#A65D37]/30 bg-[#fdf6f0] px-3 py-2 sm:col-span-2">
+                        <dt className="text-[#5c3319]/90">Alertas</dt>
+                        <dd className="mt-1 text-[#2F3E46]">
+                          <span className="font-semibold text-red-800">
+                            Sin unidades: {resumenStock.agotados}
+                          </span>
+                          {" · "}
+                          <span className="font-semibold text-[#8b6914]">
+                            Stock bajo (1–5 u.): {resumenStock.bajoStock}
+                          </span>
+                        </dd>
+                      </div>
+                    </dl>
+                    {resumenStock.criticos.length > 0 && (
+                      <div className="mt-3">
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-[#53634B]">
+                          Prioridad (menos unidades)
+                        </p>
+                        <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-[11px]">
+                          {resumenStock.criticos.map((c) => (
+                            <li
+                              key={c.name}
+                              className="flex justify-between gap-2 rounded-lg bg-white/80 px-2 py-1"
+                            >
+                              <span className="min-w-0 truncate text-[#2F3E46]">{c.name}</span>
+                              <span className="shrink-0 font-mono font-semibold tabular-nums text-[#A65D37]">
+                                {c.stock}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-[#A65D37]/25 bg-gradient-to-br from-[#fefdfb] to-[#F2EBD3]/35 p-4 shadow-sm sm:p-5">
+                    <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[#A65D37]">
+                      Pedidos web
+                    </p>
+                    <p className="mt-1 text-[11px] text-[#2F3E46]/65">
+                      Lista actual: {resumenPedidos.totalEnLista} pedido(s). Suma de totales
+                      en pedidos no cancelados:{" "}
+                      <strong className="text-[#2F3E46]">
+                        ${resumenPedidos.montoPedidosActivos.toLocaleString("es-AR")}
+                      </strong>{" "}
+                      ({resumenPedidos.cantidadActivos} pedido(s)).
+                    </p>
+                    <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                      {(
+                        [
+                          ["recibido", "Recibido"],
+                          ["en_preparacion", "En preparación"],
+                          ["enviado", "Enviado"],
+                          ["entregado", "Entregado"],
+                          ["cancelado", "Cancelado"],
+                        ] as const
+                      ).map(([k, label]) => (
+                        <div
+                          key={k}
+                          className="flex items-center justify-between rounded-lg border border-[#2F3E46]/10 bg-white/90 px-3 py-2"
+                        >
+                          <dt className="text-[#2F3E46]/75">{label}</dt>
+                          <dd className="font-heading font-bold tabular-nums text-[#2F3E46]">
+                            {resumenPedidos.porEstado[k]}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <div className="mt-3 space-y-2 rounded-xl border border-[#2F3E46]/10 bg-white/90 px-3 py-2 text-[11px] leading-snug text-[#2F3E46]">
+                      <p>
+                        <strong className="text-[#8b4510]">Modificación sin confirmar</strong>{" "}
+                        (cliente): {resumenPedidos.modificacionPendienteCliente}
+                      </p>
+                      <p>
+                        <strong className="text-[#53634B]">Cliente confirmó</strong> (pendiente
+                        de marcar visto): {resumenPedidos.clienteConfirmoSinVista}
+                      </p>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {([7, 30] as const).map((dias) => {
+                        const w = resumenPedidos.enVentana(dias);
+                        return (
+                          <div
+                            key={dias}
+                            className="rounded-xl border border-[#2F3E46]/10 bg-white/90 px-3 py-2 text-[11px]"
+                          >
+                            <p className="font-heading text-[10px] font-bold uppercase tracking-wide text-[#53634B]">
+                              Últimos {dias} días
+                            </p>
+                            <p className="mt-1 text-[#2F3E46]">
+                              {w.cantidad} pedido(s) creados ·{" "}
+                              <span className="font-semibold">
+                                ${w.monto.toLocaleString("es-AR")}
+                              </span>{" "}
+                              total (no cancelados)
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </section>
               )}
 
               {tab === "portada" && (
