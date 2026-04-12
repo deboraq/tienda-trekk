@@ -339,6 +339,7 @@ export default function Home() {
   const irAlInicio = useCallback(() => {
     setVerTienda(false);
     setMenuMovilAbierto(false);
+    setMostrarCategorias(false);
     window.setTimeout(() => {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }, 80);
@@ -347,6 +348,7 @@ export default function Home() {
   const irASeccion = useCallback((id: "nosotros" | "contacto") => {
     setVerTienda(false);
     setMenuMovilAbierto(false);
+    setMostrarCategorias(false);
     window.setTimeout(() => {
       document
         .getElementById(id)
@@ -1072,16 +1074,21 @@ export default function Home() {
         </section>
       )}
 
-      {/* Botón para abrir Preguntas Frecuentes en ventana aparte */}
-      <section className="max-w-4xl mx-auto py-12 px-6 text-center">
+      {/* Preguntas frecuentes — CTA visible */}
+      <section className="mx-auto max-w-3xl px-4 py-14 text-center sm:px-6">
         <button
           type="button"
           onClick={() => setMostrarFaqModal(true)}
-          className="bg-[#F2EBD3] hover:bg-[#e8e0c8] font-bold text-lg px-6 py-3 rounded-full border-2 border-[#2F3E46]/25 focus:outline-none focus:ring-2 focus:ring-[#53634B] focus:ring-offset-2 transition-colors font-heading uppercase tracking-wide text-sm"
-          style={{ color: brand.forest }}
+          className="inline-flex w-full max-w-xl items-center justify-center gap-3 rounded-2xl border-2 border-[#2F3E46]/25 bg-[#A65D37] px-6 py-5 text-base font-heading font-bold uppercase tracking-[0.12em] text-white shadow-[0_12px_40px_-8px_rgba(166,93,55,0.55)] transition-all hover:bg-[#8f4e2f] hover:shadow-[0_16px_44px_-8px_rgba(47,62,70,0.35)] focus:outline-none focus:ring-4 focus:ring-[#A65D37]/40 active:scale-[0.99] md:px-12 md:py-6 md:text-xl"
         >
-          ❓ Preguntas Frecuentes
+          <span className="text-2xl md:text-3xl" aria-hidden>
+            ❓
+          </span>
+          Preguntas frecuentes
         </button>
+        <p className="mt-4 text-sm text-[#2F3E46]/65">
+          Envíos, pagos y cómo comprar
+        </p>
       </section>
 
       {/* Modal Preguntas Frecuentes */}
