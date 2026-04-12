@@ -30,13 +30,23 @@ import {
   TEXTO_LED_DEFAULT,
 } from "../lib/site-config";
 import { CATALOG_ADMIN_EMAIL, esCatalogAdminEmail } from "../lib/catalog-admin";
-import type { Pedido, PedidoEstado, Product } from "../types";
-import { docDataAPedido, etiquetaEstadoPedido, PEDIDO_ESTADOS } from "../lib/pedidos";
+import type { Pedido, PedidoEstado, PedidoLineItem, Product } from "../types";
+import {
+  docDataAPedido,
+  etiquetaEstadoPedido,
+  itemsPedidoDifieren,
+  PEDIDO_ESTADOS,
+} from "../lib/pedidos";
 import {
   construirMensajeWhatsAppPedidoCliente,
   normalizarTelefonoWa,
   urlWhatsAppParaNumero,
 } from "../lib/whatsapp";
+import {
+  actualizarInventarioPorCambioDeItemsPedido,
+  cambiarEstadoPedidoConInventario,
+  estadoComprometeStock,
+} from "../lib/pedido-inventario";
 
 type Tab = "portada" | "categorias" | "catalogo" | "pedidos";
 
@@ -183,6 +193,15 @@ export function AdminTiendaPanel({
   const [waPedidoModificado, setWaPedidoModificado] = useState<
     Record<string, boolean>
   >({});
+  /** Edición de ítems del pedido (cantidades / líneas) antes de guardar en Firestore. */
+  const [pedidoItemsEdit, setPedidoItemsEdit] = useState<{
+    pedidoId: string;
+    items: PedidoLineItem[];
+  } | null>(null);
+  const [productoParaAgregarPedido, setProductoParaAgregarPedido] = useState("");
+  const [guardandoItemsPedidoId, setGuardandoItemsPedidoId] = useState<
+    string | null
+  >(null);
 
   const cargarPedidosAdmin = useCallback(async () => {
     setPedidoMsg(null);
@@ -260,6 +279,9 @@ export function AdminTiendaPanel({
       setCatalogoVista("lista");
       setEditando(null);
       setPedidos([]);
+      setPedidoItemsEdit(null);
+      setProductoParaAgregarPedido("");
+      setGuardandoItemsPedidoId(null);
     }
   }, [open]);
 
@@ -541,21 +563,167 @@ export function AdminTiendaPanel({
   };
 
   const cambiarEstadoPedido = async (pedidoId: string, status: PedidoEstado) => {
+    const pedidoRef = pedidos.find((x) => x.id === pedidoId);
+    if (
+      pedidoRef?.confirmacionModificacion === "pendiente" &&
+      estadoComprometeStock(status)
+    ) {
+      setPedidoMsg(
+        "Este pedido tiene cambios que el cliente debe confirmar en «Mi cuenta». No podés ponerlo en preparación ni enviarlo hasta que acepte o rechace (o hasta que reviertas los ítems a lo original)."
+      );
+      return;
+    }
     setActualizandoPedidoId(pedidoId);
     setPedidoMsg(null);
     try {
-      await updateDoc(doc(getDb(), "pedidos", pedidoId), {
-        status,
-        updatedAt: serverTimestamp(),
-      });
+      const res = await cambiarEstadoPedidoConInventario(pedidoId, status);
+      if (!res.ok) {
+        setPedidoMsg(res.mensaje);
+        return;
+      }
       setPedidos((prev) =>
-        prev.map((p) => (p.id === pedidoId ? { ...p, status } : p))
+        prev.map((p) =>
+          p.id === pedidoId
+            ? {
+                ...p,
+                status,
+                stockCommitted: res.nuevoStockCommitted,
+                updatedAt: new Date(),
+              }
+            : p
+        )
       );
+      onCatalogoActualizado();
       setPedidoMsg("Estado actualizado.");
     } catch (err) {
       setPedidoMsg(mensajeFirebase(err));
     } finally {
       setActualizandoPedidoId(null);
+    }
+  };
+
+  const recalcLineItem = (line: PedidoLineItem): PedidoLineItem => ({
+    ...line,
+    lineTotal: line.unitPrice * line.quantity,
+  });
+
+  const abrirEdicionItemsPedido = (p: Pedido) => {
+    setPedidoMsg(null);
+    setProductoParaAgregarPedido("");
+    setPedidoItemsEdit({
+      pedidoId: p.id,
+      items: p.items.map((i) => recalcLineItem({ ...i })),
+    });
+  };
+
+  const cerrarEdicionItemsPedido = () => {
+    setPedidoItemsEdit(null);
+    setProductoParaAgregarPedido("");
+  };
+
+  const actualizarCantidadItemPedido = (index: number, raw: string) => {
+    const n = parseInt(raw, 10);
+    if (!pedidoItemsEdit) return;
+    if (Number.isNaN(n) || n < 1) return;
+    setPedidoItemsEdit((prev) => {
+      if (!prev) return prev;
+      const items = [...prev.items];
+      items[index] = recalcLineItem({ ...items[index], quantity: n });
+      return { ...prev, items };
+    });
+  };
+
+  const quitarItemPedido = (index: number) => {
+    setPedidoItemsEdit((prev) => {
+      if (!prev) return prev;
+      const items = prev.items.filter((_, i) => i !== index);
+      return { ...prev, items };
+    });
+  };
+
+  const agregarProductoAlPedidoEnEdicion = (producto: Product) => {
+    setPedidoItemsEdit((prev) => {
+      if (!prev) return prev;
+      const idx = prev.items.findIndex((l) => l.productId === producto.id);
+      let items: PedidoLineItem[];
+      if (idx >= 0) {
+        items = [...prev.items];
+        items[idx] = recalcLineItem({
+          ...items[idx],
+          quantity: items[idx].quantity + 1,
+        });
+      } else {
+        items = [
+          ...prev.items,
+          recalcLineItem({
+            productId: producto.id,
+            name: producto.name,
+            quantity: 1,
+            unitPrice: producto.price,
+            lineTotal: producto.price,
+          }),
+        ];
+      }
+      return { ...prev, items };
+    });
+  };
+
+  const guardarItemsPedidoFirestore = async () => {
+    if (!pedidoItemsEdit) return;
+    const { pedidoId, items } = pedidoItemsEdit;
+    if (items.length === 0) {
+      setPedidoMsg("El pedido tiene que tener al menos un producto.");
+      return;
+    }
+    const pedidoActual = pedidos.find((p) => p.id === pedidoId);
+    if (!pedidoActual) {
+      setPedidoMsg("No se encontró el pedido.");
+      return;
+    }
+    const itemsNorm = items.map((i) => recalcLineItem(i));
+    const total = itemsNorm.reduce((s, i) => s + i.lineTotal, 0);
+    const hayCambioReal = itemsPedidoDifieren(pedidoActual.items, itemsNorm);
+    setGuardandoItemsPedidoId(pedidoId);
+    setPedidoMsg(null);
+    try {
+      if (pedidoActual.stockCommitted) {
+        await actualizarInventarioPorCambioDeItemsPedido({
+          pedidoId,
+          itemsAnteriores: pedidoActual.items,
+          itemsNuevos: itemsNorm,
+          stockCommitted: true,
+          marcarConfirmacionPendiente: hayCambioReal,
+        });
+      } else {
+        await updateDoc(doc(getDb(), "pedidos", pedidoId), {
+          items: itemsNorm,
+          total,
+          updatedAt: serverTimestamp(),
+          ...(hayCambioReal ? { confirmacionModificacion: "pendiente" } : {}),
+        });
+      }
+      setPedidos((prev) =>
+        prev.map((p) =>
+          p.id === pedidoId
+            ? {
+                ...p,
+                items: itemsNorm,
+                total,
+                updatedAt: new Date(),
+                confirmacionModificacion: hayCambioReal
+                  ? "pendiente"
+                  : p.confirmacionModificacion,
+              }
+            : p
+        )
+      );
+      onCatalogoActualizado();
+      cerrarEdicionItemsPedido();
+      setPedidoMsg("Pedido modificado y guardado.");
+    } catch (err) {
+      setPedidoMsg(mensajeFirebase(err));
+    } finally {
+      setGuardandoItemsPedidoId(null);
     }
   };
 
@@ -1155,7 +1323,10 @@ export function AdminTiendaPanel({
                         Pedidos web
                       </h3>
                       <p className="mt-1 max-w-md text-xs leading-relaxed text-[#2F3E46]/65">
-                        Cuando confirmés pago o envío, cambiá el estado acá. El cliente lo ve en «Mi cuenta».
+                        Si cambiás ítems o cantidades, el cliente logueado debe confirmar en «Mi cuenta» antes de que puedas poner el pedido en preparación. Sin cuenta, el pedido no queda guardado en el sistema: coordiná el cambio por WhatsApp.
+                      </p>
+                      <p className="mt-1 max-w-md text-xs leading-relaxed text-[#2F3E46]/55">
+                        Cuando el cliente confirma el pedido con cuenta, el stock ya se reserva en el catálogo (otros no pueden comprar esas unidades). Al cancelar o si el cliente rechaza un pedido modificado, el stock vuelve. Pasar a en preparación solo cambia el estado, sin volver a descontar.
                       </p>
                     </div>
                     <button
@@ -1174,7 +1345,7 @@ export function AdminTiendaPanel({
                     <ol className="mt-2 list-decimal space-y-1.5 pl-4 marker:font-medium">
                       <li>Revisá pedidos nuevos al menos una vez al día.</li>
                       <li>Respondé por WhatsApp y actualizá el estado acá para que el cliente lo vea en «Mi cuenta».</li>
-                      <li>Si vendés unidades limitadas, ajustá el stock en la pestaña Productos.</li>
+                      <li>El stock con número en Productos se sincroniza con los pedidos al avanzar o cancelar estados; revisá ahí si algo no cierra.</li>
                     </ol>
                   </div>
                   {pedidoMsg && (
@@ -1258,14 +1429,136 @@ export function AdminTiendaPanel({
                               ))}
                             </select>
                           </div>
-                          <p className="mt-2 text-xs text-[#2F3E46]/75">
-                            {p.items
-                              .map((i) => `${i.name} ×${i.quantity}`)
-                              .join(" · ")}
-                          </p>
-                          <p className="mt-1 font-bold text-[#A65D37]">
-                            ${p.total.toLocaleString("es-AR")}
-                          </p>
+                          {p.stockCommitted && (
+                            <p className="mt-1.5 text-[10px] font-medium text-[#53634B]">
+                              Unidades descontadas del stock del catálogo (pedido en curso).
+                            </p>
+                          )}
+                          {pedidoItemsEdit?.pedidoId === p.id ? (
+                            <div className="mt-3 space-y-2 rounded-xl border border-[#53634B]/25 bg-[#fefdfb] p-3">
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-[#53634B]">
+                                Modificar pedido
+                              </p>
+                              <ul className="space-y-2">
+                                {pedidoItemsEdit.items.map((line, idx) => (
+                                  <li
+                                    key={`${line.productId}-${idx}`}
+                                    className="flex flex-wrap items-center gap-2 border-b border-[#2F3E46]/8 pb-2 last:border-0 last:pb-0"
+                                  >
+                                    <span className="min-w-0 flex-1 text-left text-xs text-[#2F3E46]">
+                                      {line.name}
+                                    </span>
+                                    <label className="flex items-center gap-1.5 text-[11px] text-[#2F3E46]/75">
+                                      <span className="whitespace-nowrap">Cant.</span>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        inputMode="numeric"
+                                        value={line.quantity}
+                                        onChange={(e) =>
+                                          actualizarCantidadItemPedido(idx, e.target.value)
+                                        }
+                                        className="w-16 rounded-lg border border-[#2F3E46]/15 bg-white px-2 py-1 text-center text-xs font-semibold text-[#2F3E46] outline-none focus:ring-2 focus:ring-[#53634B]/25"
+                                      />
+                                    </label>
+                                    <span className="text-xs font-semibold text-[#A65D37]">
+                                      ${line.lineTotal.toLocaleString("es-AR")}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => quitarItemPedido(idx)}
+                                      disabled={pedidoItemsEdit.items.length <= 1}
+                                      className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-bold uppercase text-red-800 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                      Quitar
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                              {productos.length > 0 ? (
+                                <label className="mt-1 block text-left">
+                                  <span className="text-[10px] font-bold uppercase tracking-wide text-[#53634B]">
+                                    Agregar del catálogo
+                                  </span>
+                                  <select
+                                    value={productoParaAgregarPedido}
+                                    onChange={(e) => {
+                                      const id = e.target.value;
+                                      setProductoParaAgregarPedido("");
+                                      if (!id) return;
+                                      const prod = productos.find((x) => x.id === id);
+                                      if (prod) agregarProductoAlPedidoEnEdicion(prod);
+                                    }}
+                                    className={`${inputClass} mt-1 text-xs`}
+                                  >
+                                    <option value="">Elegir producto…</option>
+                                    {productos.map((pr) => (
+                                      <option key={pr.id} value={pr.id}>
+                                        {pr.name} (${pr.price.toLocaleString("es-AR")})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              ) : (
+                                <p className="text-[11px] text-[#2F3E46]/55">
+                                  No hay productos en el catálogo cargados; cargalos en la pestaña Productos para sumar líneas.
+                                </p>
+                              )}
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#2F3E46]/10 pt-2">
+                                <p className="font-bold text-[#A65D37]">
+                                  Total: $
+                                  {pedidoItemsEdit.items
+                                    .reduce((s, i) => s + i.lineTotal, 0)
+                                    .toLocaleString("es-AR")}
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={cerrarEdicionItemsPedido}
+                                    disabled={guardandoItemsPedidoId === p.id}
+                                    className="rounded-lg border border-[#2F3E46]/20 bg-white px-3 py-2 text-[11px] font-bold uppercase text-[#2F3E46] transition-colors hover:bg-[#2F3E46]/5 disabled:opacity-50"
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void guardarItemsPedidoFirestore()}
+                                    disabled={
+                                      guardandoItemsPedidoId === p.id ||
+                                      pedidoItemsEdit.items.length === 0
+                                    }
+                                    className="rounded-lg bg-[#53634B] px-3 py-2 text-[11px] font-bold uppercase text-white transition-opacity hover:opacity-95 disabled:opacity-50"
+                                  >
+                                    {guardandoItemsPedidoId === p.id
+                                      ? "Guardando…"
+                                      : "Guardar cambios"}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <p className="mt-2 text-xs text-[#2F3E46]/75">
+                                {p.items
+                                  .map((i) => `${i.name} ×${i.quantity}`)
+                                  .join(" · ")}
+                              </p>
+                              <p className="mt-1 font-bold text-[#A65D37]">
+                                ${p.total.toLocaleString("es-AR")}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => abrirEdicionItemsPedido(p)}
+                                disabled={
+                                  guardandoItemsPedidoId !== null ||
+                                  actualizandoPedidoId === p.id
+                                }
+                                className="mt-2 w-full rounded-lg border-2 border-dashed border-[#53634B]/35 bg-[#53634B]/6 py-2 text-[11px] font-bold uppercase tracking-wide text-[#53634B] transition-colors hover:bg-[#53634B]/12 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Modificar pedido (cantidades / productos)
+                              </button>
+                            </>
+                          )}
                           {p.clientPhone ? (
                             <p className="mt-1.5 text-[11px] text-[#53634B]">
                               WhatsApp cliente:{" "}
@@ -1306,9 +1599,13 @@ export function AdminTiendaPanel({
                               className="mt-0.5 h-4 w-4 shrink-0 accent-[#53634B]"
                             />
                             <span>
-                              Incluir aviso de que el pedido fue{" "}
-                              <strong>modificado o ajustado</strong> (texto en el
-                              mensaje)
+                              Incluir en el mensaje de WhatsApp que el pedido fue{" "}
+                              <strong>modificado o ajustado</strong> y que puede ver el
+                              detalle en «Mi cuenta».
+                              <span className="mt-1 block text-[10px] font-normal text-[#2F3E46]/65">
+                                La confirmación del cliente no está en la web: la coordinás
+                                cuando te responde por WhatsApp.
+                              </span>
                             </span>
                           </label>
                           <button

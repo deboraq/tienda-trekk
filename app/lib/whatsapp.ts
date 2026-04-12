@@ -31,13 +31,16 @@ export function construirMensajeWhatsAppPedidoCliente(opts: {
     .join("\n");
   const ref = opts.pedidoId.length > 12 ? `${opts.pedidoId.slice(0, 8)}…` : opts.pedidoId;
   const avisoActualizado = opts.pedidoActualizado
-    ? "\n_Actualizamos el pedido respecto al pedido original._\n"
+    ? "\n_Actualizamos el pedido respecto al que habías hecho en la web (el detalle actualizado está en la tienda → «Mi cuenta» → Mis pedidos)._\n"
     : "\n";
+  const cierre = opts.pedidoActualizado
+    ? `Respondé a este mensaje para confirmar si te sirve así. *En la web no hay un botón de confirmación del pedido*: lo vemos entre nosotros por WhatsApp. ¡Gracias!`
+    : `Por favor confirmame si te sirve así o escribinos cualquier duda. ¡Gracias!`;
   return (
     `¡Hola! Te escribimos desde *Sangre Nómade Adventure*.${avisoActualizado}` +
     `*Tu pedido* (ref: \`${ref}\`):\n${lineas}\n\n` +
     `*Total estimado:* $${opts.total.toLocaleString("es-AR")}\n\n` +
-    `Por favor confirmame si te sirve así o escribinos cualquier duda. ¡Gracias!`
+    cierre
   );
 }
 

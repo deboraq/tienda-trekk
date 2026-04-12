@@ -1,11 +1,11 @@
 import type { User } from "firebase/auth";
-import {
-  collection,
-  addDoc,
-  serverTimestamp,
-} from "firebase/firestore";
-import { getDb } from "../firebase/config";
-import type { CartItem, Pedido, PedidoEstado, PedidoLineItem } from "../types";
+import type {
+  CartItem,
+  ConfirmacionModificacion,
+  Pedido,
+  PedidoEstado,
+  PedidoLineItem,
+} from "../types";
 
 export const PEDIDO_ESTADOS: PedidoEstado[] = [
   "recibido",
@@ -45,6 +45,37 @@ export function esEstadoPedido(v: string): v is PedidoEstado {
   return PEDIDO_ESTADOS.includes(v as PedidoEstado);
 }
 
+const CONFIRMACION_VALORES: ConfirmacionModificacion[] = [
+  "no_aplica",
+  "pendiente",
+  "aceptada",
+  "rechazada",
+];
+
+export function esConfirmacionModificacion(
+  v: unknown
+): v is ConfirmacionModificacion {
+  return typeof v === "string" && CONFIRMACION_VALORES.includes(v as ConfirmacionModificacion);
+}
+
+/** Compara ítems del pedido (orden normalizado) para saber si la tienda los cambió. */
+export function itemsPedidoDifieren(
+  a: PedidoLineItem[],
+  b: PedidoLineItem[]
+): boolean {
+  const norm = (items: PedidoLineItem[]) =>
+    [...items]
+      .sort((x, y) => x.productId.localeCompare(y.productId))
+      .map((i) => ({
+        productId: i.productId,
+        name: i.name,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice,
+        lineTotal: i.lineTotal,
+      }));
+  return JSON.stringify(norm(a)) !== JSON.stringify(norm(b));
+}
+
 export async function crearPedidoDesdeCarrito(
   user: User,
   carrito: CartItem[],
@@ -61,17 +92,14 @@ export async function crearPedidoDesdeCarrito(
     unitPrice: ci.product.price,
     lineTotal: ci.product.price * ci.quantity,
   }));
-  const ref = await addDoc(collection(getDb(), "pedidos"), {
+  const { crearPedidoYReservarStock } = await import("./pedido-inventario");
+  return crearPedidoYReservarStock({
     userId: user.uid,
     userEmail: email,
     clientPhone,
     items,
     total,
-    status: "recibido",
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
   });
-  return ref.id;
 }
 
 export function docDataAPedido(
@@ -105,6 +133,17 @@ export function docDataAPedido(
     createdAt = (ca as { toDate: () => Date }).toDate();
   }
 
+  let updatedAt: Date | null = null;
+  const ua = data.updatedAt;
+  if (
+    ua &&
+    typeof ua === "object" &&
+    "toDate" in ua &&
+    typeof (ua as { toDate: () => Date }).toDate === "function"
+  ) {
+    updatedAt = (ua as { toDate: () => Date }).toDate();
+  }
+
   const items: PedidoLineItem[] = itemsRaw.map((raw) => {
     const o = raw as Record<string, unknown>;
     return {
@@ -122,6 +161,15 @@ export function docDataAPedido(
       ? phoneRaw
       : undefined;
 
+  const stockCommitted = data.stockCommitted === true;
+
+  const confRaw = data.confirmacionModificacion;
+  const confirmacionModificacion: ConfirmacionModificacion = esConfirmacionModificacion(
+    confRaw
+  )
+    ? confRaw
+    : "no_aplica";
+
   return {
     id,
     userId: uid,
@@ -131,5 +179,8 @@ export function docDataAPedido(
     total,
     status,
     createdAt,
+    updatedAt,
+    stockCommitted,
+    confirmacionModificacion,
   };
 }

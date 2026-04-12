@@ -9,7 +9,15 @@ import {
   onAuthStateChanged,
   type User,
 } from "firebase/auth";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDocs,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 import { FirebaseError } from "firebase/app";
 import { getDb, getFirebaseAuth } from "../firebase/config";
 import {
@@ -64,6 +72,12 @@ function mensajeAuth(error: unknown): string {
 
 const inputClass =
   "mt-1.5 w-full rounded-xl border border-[#2F3E46]/12 bg-white px-3.5 py-2.5 text-[#2F3E46] shadow-sm outline-none transition-[box-shadow,border-color] placeholder:text-[#2F3E46]/35 focus:border-[#53634B] focus:ring-2 focus:ring-[#53634B]/20";
+
+/** La tienda tocó el pedido después del alta (estado, ítems, etc.). */
+function huboActualizacionDesdeElAlta(p: Pedido): boolean {
+  if (!p.updatedAt || !p.createdAt) return false;
+  return p.updatedAt.getTime() > p.createdAt.getTime() + 500;
+}
 
 function CronologiaEstadosPedido({ status }: { status: PedidoEstado }) {
   if (status === "cancelado") {
@@ -151,6 +165,7 @@ export function CuentaClientePanel({ open, onClose }: Props) {
   const [pedidoExpandidoId, setPedidoExpandidoId] = useState<string | null>(null);
   const [mostrarRecuperar, setMostrarRecuperar] = useState(false);
   const [recuperarEnviado, setRecuperarEnviado] = useState(false);
+  const [accionPedidoId, setAccionPedidoId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -212,6 +227,81 @@ export function CuentaClientePanel({ open, onClose }: Props) {
   }, [open]);
 
   if (!open) return null;
+
+  const aceptarPedidoModificado = async (p: Pedido) => {
+    if (!user) return;
+    setAccionPedidoId(p.id);
+    setError(null);
+    try {
+      await updateDoc(doc(getDb(), "pedidos", p.id), {
+        confirmacionModificacion: "aceptada",
+        updatedAt: serverTimestamp(),
+      });
+      setPedidos((prev) =>
+        prev.map((x) =>
+          x.id === p.id
+            ? {
+                ...x,
+                confirmacionModificacion: "aceptada",
+                updatedAt: new Date(),
+              }
+            : x
+        )
+      );
+      setError(null);
+    } catch (e) {
+      console.error(e);
+      setError(
+        "No pudimos registrar tu confirmación. Probá de nuevo o escribinos por WhatsApp."
+      );
+    } finally {
+      setAccionPedidoId(null);
+    }
+  };
+
+  const rechazarPedidoModificado = async (p: Pedido) => {
+    if (!user) return;
+    setAccionPedidoId(p.id);
+    setError(null);
+    try {
+      const token = await user.getIdToken();
+      const r = await fetch("/api/pedidos/responder-modificacion", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ pedidoId: p.id }),
+      });
+      const data = (await r.json()) as { error?: string };
+      if (!r.ok) {
+        throw new Error(data.error ?? "No se pudo cancelar el pedido.");
+      }
+      setPedidos((prev) =>
+        prev.map((x) =>
+          x.id === p.id
+            ? {
+                ...x,
+                confirmacionModificacion: "rechazada",
+                status: "cancelado",
+                stockCommitted: false,
+                updatedAt: new Date(),
+              }
+            : x
+        )
+      );
+      setError(null);
+    } catch (e) {
+      console.error(e);
+      setError(
+        e instanceof Error
+          ? e.message
+          : "No pudimos procesar el rechazo. Escribinos por WhatsApp."
+      );
+    } finally {
+      setAccionPedidoId(null);
+    }
+  };
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
@@ -543,12 +633,19 @@ export function CuentaClientePanel({ open, onClose }: Props) {
                 </button>
               </div>
 
+              {error && (
+                <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+                  {error}
+                </p>
+              )}
+
               <div>
                 <h3 className="font-heading text-sm font-bold uppercase tracking-wide text-[#2F3E46]">
                   Mis pedidos
                 </h3>
                 <p className="mt-1 text-xs text-[#2F3E46]/65">
-                  El estado lo actualiza el equipo cuando confirman pago o envío.
+                  El estado lo actualiza el equipo. Si la tienda ajusta tu pedido, te
+                  pediremos confirmación acá (y podés coordinar por WhatsApp).
                 </p>
               </div>
 
@@ -565,6 +662,9 @@ export function CuentaClientePanel({ open, onClose }: Props) {
                 <ul className="space-y-3">
                   {pedidos.map((p) => {
                     const expandido = pedidoExpandidoId === p.id;
+                    const esperaConfirmacion =
+                      p.confirmacionModificacion === "pendiente" &&
+                      p.status !== "cancelado";
                     return (
                       <li
                         key={p.id}
@@ -594,6 +694,18 @@ export function CuentaClientePanel({ open, onClose }: Props) {
                           <div className="min-w-0 flex-1">
                             <p className="font-heading text-[10px] font-bold uppercase tracking-wider text-[#A65D37]">
                               Pedido
+                              {esperaConfirmacion && (
+                                <span
+                                  className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-[#A65D37]/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#8b4510]"
+                                  title="La tienda modificó el pedido"
+                                >
+                                  <span
+                                    className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#A65D37]"
+                                    aria-hidden
+                                  />
+                                  Confirmar
+                                </span>
+                              )}
                             </p>
                             <p className="text-xs font-medium text-[#2F3E46]">
                               {p.createdAt
@@ -618,6 +730,60 @@ export function CuentaClientePanel({ open, onClose }: Props) {
                           aria-labelledby={`pedido-cabecera-${p.id}`}
                           className="px-4 pb-3 pt-2"
                         >
+                          {esperaConfirmacion && (
+                            <div className="mb-3 rounded-xl border-2 border-[#A65D37]/40 bg-[#fff9f4] px-3 py-3 text-[11px] leading-snug text-[#2F3E46] shadow-sm">
+                              <p className="font-heading text-xs font-bold uppercase tracking-wide text-[#8b4510]">
+                                La tienda modificó tu pedido
+                              </p>
+                              <p className="mt-2 text-[#2F3E46]/90">
+                                Revisá los productos y el total abajo. Si te sirve como quedó,
+                                confirmá para que puedan prepararlo. Si no, rechazalo y el
+                                pedido se cancela (la tienda puede avisarte también por
+                                WhatsApp).
+                              </p>
+                              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                                <button
+                                  type="button"
+                                  disabled={accionPedidoId === p.id}
+                                  onClick={() => void aceptarPedidoModificado(p)}
+                                  className="flex-1 rounded-xl bg-[#53634B] py-2.5 font-heading text-[11px] font-bold uppercase tracking-wide text-white transition-opacity hover:opacity-95 disabled:opacity-50"
+                                >
+                                  {accionPedidoId === p.id
+                                    ? "Procesando…"
+                                    : "Confirmo el pedido así"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={accionPedidoId === p.id}
+                                  onClick={() => void rechazarPedidoModificado(p)}
+                                  className="flex-1 rounded-xl border-2 border-red-300 bg-white py-2.5 font-heading text-[11px] font-bold uppercase tracking-wide text-red-800 transition-colors hover:bg-red-50 disabled:opacity-50"
+                                >
+                                  No lo quiero (cancelar)
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          {huboActualizacionDesdeElAlta(p) && !esperaConfirmacion && (
+                            <div className="mb-3 rounded-xl border border-[#A65D37]/35 bg-[#fdf6f0] px-3 py-2.5 text-[11px] leading-snug text-[#5c3319] shadow-sm">
+                              <p className="font-heading font-semibold text-[#2F3E46]">
+                                La tienda actualizó este pedido
+                              </p>
+                              <p className="mt-1.5 text-[#2F3E46]/90">
+                                Los ítems, el total o el estado pueden haber cambiado
+                                respecto al envío original. Si la tienda te escribió por
+                                WhatsApp, coordiná con ellos; acá ves el detalle actualizado.
+                              </p>
+                              {p.updatedAt && (
+                                <p className="mt-2 text-[10px] text-[#2F3E46]/55">
+                                  Última actualización:{" "}
+                                  {p.updatedAt.toLocaleString("es-AR", {
+                                    dateStyle: "short",
+                                    timeStyle: "short",
+                                  })}
+                                </p>
+                              )}
+                            </div>
+                          )}
                           <ul className="space-y-1 text-xs text-[#2F3E46]/85">
                             {p.items.map((it, i) => (
                               <li key={`${p.id}-${i}`}>
