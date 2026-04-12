@@ -1,6 +1,10 @@
 /** Número de la tienda (solo dígitos, formato wa.me). */
 export const WHATSAPP_NUMERO_TIENDA = "5493515416836";
 
+/** Mensaje prellenado: botón flotante, asesoramiento, etc. */
+export const MENSAJE_WHATSAPP_CONSULTA_GENERAL =
+  "¡Hola Sangre Nómade! Tengo una consulta sobre...";
+
 /**
  * Normaliza a dígitos para wa.me (Argentina).
  * Acepta +54 9 351 …, 9 351 …, 351 … sin prefijo, etc.
@@ -39,4 +43,11 @@ export function construirMensajeWhatsAppPedidoCliente(opts: {
 
 export function urlWhatsAppParaNumero(telefonoDigitos: string, mensaje: string): string {
   return `https://wa.me/${telefonoDigitos}?text=${encodeURIComponent(mensaje)}`;
+}
+
+export function urlWhatsAppTiendaConsultaGeneral(): string {
+  return urlWhatsAppParaNumero(
+    WHATSAPP_NUMERO_TIENDA,
+    MENSAJE_WHATSAPP_CONSULTA_GENERAL
+  );
 }
