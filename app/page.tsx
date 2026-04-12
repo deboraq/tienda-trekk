@@ -23,7 +23,6 @@ import {
 } from "./lib/site-config";
 import { esCatalogAdminEmail } from "./lib/catalog-admin";
 import {
-  etiquetaStockVitrina,
   puedeAgregarUnidad,
   productoSinStock,
   stockDesdeFirestore,
@@ -305,8 +304,12 @@ export default function Home() {
           code === "permission-denied"
             ? " Firebase aún no tiene permiso para «pedidos»: en Firebase Console → Firestore → Reglas, publicá el contenido del archivo firestore.rules de este proyecto (botón Publicar)."
             : "";
+        const msg =
+          e instanceof Error && e.message
+            ? ` ${e.message}`
+            : "";
         setAvisoCheckout(
-          `No pudimos guardar el pedido en tu cuenta.${detalleReglas} Podés abrir WhatsApp igual con el enlace de abajo.`
+          `No pudimos guardar el pedido en tu cuenta.${msg}${detalleReglas} Podés abrir WhatsApp igual con el enlace de abajo.`
         );
       } finally {
         setFinalizandoPedido(false);
@@ -887,7 +890,6 @@ export default function Home() {
               {productosDestacados.map((producto) => {
                 const q =
                   carrito.find((i) => i.product.id === producto.id)?.quantity ?? 0;
-                const badge = etiquetaStockVitrina(producto);
                 const noPuede = productoSinStock(producto) || !puedeAgregarUnidad(producto, q);
                 return (
                   <div
@@ -915,13 +917,6 @@ export default function Home() {
                     </div>
                     <h4 className="text-xl font-bold">{producto.name}</h4>
                     <p className="text-2xl font-black text-[#53634B] my-4">${(producto.price ?? 0).toLocaleString("es-AR")}</p>
-                    {badge && (
-                      <p
-                        className={`mb-2 text-xs font-semibold ${productoSinStock(producto) ? "text-red-700" : "text-[#53634B]"}`}
-                      >
-                        {badge}
-                      </p>
-                    )}
                     <button
                       type="button"
                       disabled={noPuede}
@@ -994,7 +989,12 @@ export default function Home() {
           </h3>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-20">
-            {productosFiltrados.map((producto) => (
+            {productosFiltrados.map((producto) => {
+              const q =
+                carrito.find((i) => i.product.id === producto.id)?.quantity ?? 0;
+              const noPuede =
+                productoSinStock(producto) || !puedeAgregarUnidad(producto, q);
+              return (
               <div
                 key={producto.id}
                 className="flex flex-col overflow-hidden rounded-3xl border-2 border-[#2F3E46]/15 bg-[#fefdfb] shadow-[0_12px_36px_-14px_rgba(47,62,70,0.28)] transition-all hover:border-[#53634B]/35 hover:shadow-[0_16px_44px_-12px_rgba(47,62,70,0.32)]"
@@ -1023,40 +1023,23 @@ export default function Home() {
                     <h4 className="text-xl font-bold mb-2">{producto.name}</h4>
                     <p className="text-gray-500 text-sm mb-4">{producto.description}</p>
                     <p className="text-3xl font-black text-[#53634B] mb-6">${(producto.price ?? 0).toLocaleString("es-AR")}</p>
-                    {(() => {
-                      const q =
-                        carrito.find((i) => i.product.id === producto.id)?.quantity ?? 0;
-                      const badge = etiquetaStockVitrina(producto);
-                      const noPuede =
-                        productoSinStock(producto) || !puedeAgregarUnidad(producto, q);
-                      return (
-                        <>
-                          {badge && (
-                            <p
-                              className={`mb-3 text-xs font-semibold ${productoSinStock(producto) ? "text-red-700" : "text-[#53634B]"}`}
-                            >
-                              {badge}
-                            </p>
-                          )}
-                          <button
-                            type="button"
-                            disabled={noPuede}
-                            onClick={() => agregarAlCarrito(producto)}
-                            className={`w-full rounded-2xl py-3 font-bold shadow-md transition-all ${
-                              noPuede
-                                ? "cursor-not-allowed bg-[#2F3E46]/25 text-white"
-                                : "bg-[#53634B] text-white active:scale-95"
-                            }`}
-                          >
-                            {productoSinStock(producto) ? "Sin stock" : "Agregar al Carrito"}
-                          </button>
-                        </>
-                      );
-                    })()}
+                    <button
+                      type="button"
+                      disabled={noPuede}
+                      onClick={() => agregarAlCarrito(producto)}
+                      className={`w-full rounded-2xl py-3 font-bold shadow-md transition-all ${
+                        noPuede
+                          ? "cursor-not-allowed bg-[#2F3E46]/25 text-white"
+                          : "bg-[#53634B] text-white active:scale-95"
+                      }`}
+                    >
+                      {productoSinStock(producto) ? "Sin stock" : "Agregar al Carrito"}
+                    </button>
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           {productosFiltrados.length === 0 && (

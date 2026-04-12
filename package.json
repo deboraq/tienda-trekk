@@ -14,8 +14,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
     "canvas-confetti": "^1.9.4",
     "firebase": "^12.8.0",
+    "firebase-admin": "^12.7.0",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3"
