@@ -170,6 +170,10 @@ export function docDataAPedido(
     ? confRaw
     : "no_aplica";
 
+  const ccvRaw = data.confirmacionClienteVistaPorAdmin;
+  const confirmacionClienteVistaPorAdmin =
+    ccvRaw === true || ccvRaw === false ? ccvRaw : undefined;
+
   return {
     id,
     userId: uid,
@@ -182,5 +186,21 @@ export function docDataAPedido(
     updatedAt,
     stockCommitted,
     confirmacionModificacion,
+    confirmacionClienteVistaPorAdmin,
   };
+}
+
+/** Pedido con cambios de la tienda pendientes de aceptar o rechazar por el cliente. */
+export function pedidoTieneConfirmacionPendienteCliente(p: Pedido): boolean {
+  return (
+    p.confirmacionModificacion === "pendiente" && p.status !== "cancelado"
+  );
+}
+
+/** El cliente aceptó la modificación y la tienda aún no marcó el aviso como visto. */
+export function pedidoClienteConfirmoNoVistoPorAdmin(p: Pedido): boolean {
+  return (
+    p.confirmacionModificacion === "aceptada" &&
+    p.confirmacionClienteVistaPorAdmin === false
+  );
 }

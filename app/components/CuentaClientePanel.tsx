@@ -23,6 +23,7 @@ import { getDb, getFirebaseAuth } from "../firebase/config";
 import {
   docDataAPedido,
   etiquetaEstadoPedido,
+  pedidoTieneConfirmacionPendienteCliente,
   PEDIDO_FLUJO_NORMAL,
   indiceEnFlujoNormal,
 } from "../lib/pedidos";
@@ -228,6 +229,10 @@ export function CuentaClientePanel({ open, onClose }: Props) {
 
   if (!open) return null;
 
+  const nPedidosModifPendiente = pedidos.filter(
+    pedidoTieneConfirmacionPendienteCliente
+  ).length;
+
   const aceptarPedidoModificado = async (p: Pedido) => {
     if (!user) return;
     setAccionPedidoId(p.id);
@@ -235,6 +240,7 @@ export function CuentaClientePanel({ open, onClose }: Props) {
     try {
       await updateDoc(doc(getDb(), "pedidos", p.id), {
         confirmacionModificacion: "aceptada",
+        confirmacionClienteVistaPorAdmin: false,
         updatedAt: serverTimestamp(),
       });
       setPedidos((prev) =>
@@ -243,6 +249,7 @@ export function CuentaClientePanel({ open, onClose }: Props) {
             ? {
                 ...x,
                 confirmacionModificacion: "aceptada",
+                confirmacionClienteVistaPorAdmin: false,
                 updatedAt: new Date(),
               }
             : x
@@ -640,8 +647,16 @@ export function CuentaClientePanel({ open, onClose }: Props) {
               )}
 
               <div>
-                <h3 className="font-heading text-sm font-bold uppercase tracking-wide text-[#2F3E46]">
+                <h3 className="flex flex-wrap items-center gap-2 font-heading text-sm font-bold uppercase tracking-wide text-[#2F3E46]">
                   Mis pedidos
+                  {nPedidosModifPendiente > 0 && (
+                    <span
+                      className="inline-flex min-h-[1.25rem] min-w-[1.25rem] items-center justify-center rounded-full bg-[#A65D37] px-1 font-heading text-[10px] font-bold tabular-nums leading-none text-white"
+                      title="Tenés pedidos por confirmar"
+                    >
+                      {nPedidosModifPendiente > 9 ? "9+" : nPedidosModifPendiente}
+                    </span>
+                  )}
                 </h3>
                 <p className="mt-1 text-xs text-[#2F3E46]/65">
                   El estado lo actualiza el equipo. Si la tienda ajusta tu pedido, te
@@ -663,8 +678,7 @@ export function CuentaClientePanel({ open, onClose }: Props) {
                   {pedidos.map((p) => {
                     const expandido = pedidoExpandidoId === p.id;
                     const esperaConfirmacion =
-                      p.confirmacionModificacion === "pendiente" &&
-                      p.status !== "cancelado";
+                      pedidoTieneConfirmacionPendienteCliente(p);
                     return (
                       <li
                         key={p.id}
@@ -719,9 +733,19 @@ export function CuentaClientePanel({ open, onClose }: Props) {
                               Tocá para ver la cronología de estados
                             </p>
                           </div>
-                          <span className="shrink-0 rounded-full bg-[#53634B]/14 px-2.5 py-1 text-center font-heading text-[10px] font-bold uppercase leading-tight tracking-wide text-[#2F3E46]">
-                            {etiquetaEstadoPedido(p.status)}
-                          </span>
+                          <div className="flex shrink-0 flex-col items-end gap-1">
+                            {esperaConfirmacion && (
+                              <span
+                                className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-[#A65D37] px-1.5 font-heading text-[10px] font-bold tabular-nums leading-none text-white"
+                                title="Pedido modificado: confirmá o rechazá"
+                              >
+                                1
+                              </span>
+                            )}
+                            <span className="rounded-full bg-[#53634B]/14 px-2.5 py-1 text-center font-heading text-[10px] font-bold uppercase leading-tight tracking-wide text-[#2F3E46]">
+                              {etiquetaEstadoPedido(p.status)}
+                            </span>
+                          </div>
                         </button>
 
                         <div

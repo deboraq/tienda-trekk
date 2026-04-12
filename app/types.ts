@@ -59,4 +59,9 @@ export interface Pedido {
   stockCommitted?: boolean;
   /** Si la tienda cambió el pedido respecto al pedido original y el cliente debe responder. */
   confirmacionModificacion?: ConfirmacionModificacion;
+  /**
+   * Tras aceptar en «Mi cuenta», la tienda ve un aviso hasta marcarlo como visto.
+   * Solo `false` muestra el aviso; ausente o `true` = sin aviso (pedidos viejos o ya vistos).
+   */
+  confirmacionClienteVistaPorAdmin?: boolean;
 }

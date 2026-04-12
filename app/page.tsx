@@ -3,14 +3,25 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
 import { getDb, getFirebaseAuth } from "./firebase/config";
-import { collection, getDocs } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  onSnapshot,
+  query,
+  where,
+  type QueryDocumentSnapshot,
+} from "firebase/firestore";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
 import confetti from "canvas-confetti";
 import type { Product, CartItem } from "./types";
 import { AdminTiendaPanel } from "./components/AdminTiendaPanel";
 import { CuentaClientePanel } from "./components/CuentaClientePanel";
-import { crearPedidoDesdeCarrito } from "./lib/pedidos";
+import {
+  crearPedidoDesdeCarrito,
+  docDataAPedido,
+  pedidoTieneConfirmacionPendienteCliente,
+} from "./lib/pedidos";
 import {
   WHATSAPP_NUMERO_TIENDA,
   normalizarTelefonoWa,
@@ -29,6 +40,19 @@ import {
 } from "./lib/product-stock";
 
 const SEGMENTOS_LED_MARQUEE = 6;
+
+function productoDesdeFirestoreDoc(docSnap: QueryDocumentSnapshot): Product {
+  const d = docSnap.data();
+  return {
+    id: docSnap.id,
+    name: d.name ?? "",
+    description: d.description,
+    price: Number(d.price) ?? 0,
+    image: d.image ?? "",
+    category: d.category,
+    stock: stockDesdeFirestore(d.stock),
+  };
+}
 
 /** Paleta oficial Sangre Nómade Adventure (logo) */
 const brand = {
@@ -68,6 +92,8 @@ export default function Home() {
   const [avisoCarrito, setAvisoCarrito] = useState<string | null>(null);
   /** WhatsApp de contacto (obligatorio al enviar pedido). */
   const [telefonoCheckout, setTelefonoCheckout] = useState("");
+  /** Pedidos con modificación pendiente de confirmar (badge en «Mi cuenta»). */
+  const [notifMiCuenta, setNotifMiCuenta] = useState(0);
   const inputBusquedaCatalogRef = useRef<HTMLInputElement>(null);
 
   const categoriasParaProducto = categoriasMenu.filter((c) => c !== "Todos");
@@ -100,23 +126,14 @@ export default function Home() {
     };
   }, []);
 
-  const cargarProductos = useCallback(async () => {
+  /** Lectura puntual (p. ej. antes de pagar) y cuando el admin pide refrescar. Devuelve datos frescos. */
+  const cargarProductos = useCallback(async (): Promise<Product[]> => {
     try {
       setErrorFirebase(null);
       const querySnapshot = await getDocs(collection(getDb(), "productos"));
-      const docs: Product[] = querySnapshot.docs.map((doc) => {
-        const d = doc.data();
-        return {
-          id: doc.id,
-          name: d.name ?? "",
-          description: d.description,
-          price: Number(d.price) ?? 0,
-          image: d.image ?? "",
-          category: d.category,
-          stock: stockDesdeFirestore(d.stock),
-        };
-      });
+      const docs: Product[] = querySnapshot.docs.map(productoDesdeFirestoreDoc);
       setProductos(docs);
+      return docs;
     } catch (error) {
       const permiso =
         error instanceof FirebaseError && error.code === "permission-denied";
@@ -126,14 +143,38 @@ export default function Home() {
           : "No pudimos cargar los productos. Revisá tu conexión e intentá de nuevo."
       );
       console.error("Error trayendo productos de Firebase:", error);
+      return [];
     } finally {
       setLoading(false);
     }
   }, []);
 
+  /** Catálogo en tiempo real: si otro cliente reserva stock, se actualiza sin recargar la página. */
   useEffect(() => {
-    cargarProductos();
-  }, [cargarProductos]);
+    setLoading(true);
+    const col = collection(getDb(), "productos");
+    const unsub = onSnapshot(
+      col,
+      (snapshot) => {
+        const docs = snapshot.docs.map(productoDesdeFirestoreDoc);
+        setProductos(docs);
+        setLoading(false);
+        setErrorFirebase(null);
+      },
+      (error) => {
+        const permiso =
+          error instanceof FirebaseError && error.code === "permission-denied";
+        setErrorFirebase(
+          permiso
+            ? "Firebase bloqueó la lectura del catálogo (permisos). En la consola de Firebase → Firestore → Reglas, permití lectura pública de la colección «productos»."
+            : "No pudimos mantener el catálogo actualizado. Revisá tu conexión."
+        );
+        console.error("Error en escucha de productos:", error);
+        setLoading(false);
+      }
+    );
+    return () => unsub();
+  }, []);
 
   /** Si el admin baja el stock, ajustar cantidades en carrito. */
   useEffect(() => {
@@ -159,6 +200,33 @@ export default function Home() {
     const unsub = onAuthStateChanged(auth, setUsuarioTienda);
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    if (!usuarioTienda) {
+      setNotifMiCuenta(0);
+      return;
+    }
+    const q = query(
+      collection(getDb(), "pedidos"),
+      where("userId", "==", usuarioTienda.uid)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        let n = 0;
+        snap.forEach((d) => {
+          const p = docDataAPedido(d.id, d.data() as Record<string, unknown>);
+          if (p && pedidoTieneConfirmacionPendienteCliente(p)) n++;
+        });
+        setNotifMiCuenta(n);
+      },
+      (err) => {
+        console.error("Pedidos usuario (notificaciones):", err);
+        setNotifMiCuenta(0);
+      }
+    );
+    return () => unsub();
+  }, [usuarioTienda]);
 
   useEffect(() => {
     try {
@@ -261,73 +329,125 @@ export default function Home() {
     } catch {
       /* ignore */
     }
-    for (const item of carrito) {
-      const p = productos.find((pr) => pr.id === item.product.id) ?? item.product;
-      if (typeof p.stock === "number" && item.quantity > p.stock) {
-        setAvisoCheckout(
-          "Hay productos con cantidad mayor al stock disponible. Revisá el carrito."
-        );
-        return;
-      }
-    }
-    const listaProductos = carrito
-      .map(
-        (item) =>
-          `- ${item.product.name} x${item.quantity} ($${item.product.price * item.quantity})`
-      )
-      .join("\n");
 
-    // Abrir pestaña en el mismo instante del clic. Si primero hacemos await (Firestore),
-    // el navegador bloquea window.open y no se abre WhatsApp.
+    /* Misma pestaña vacía en el clic (evita bloqueo del navegador); luego cargamos stock fresco. */
     const pestañaWa = window.open("about:blank", "_blank");
 
     setAvisoCheckout(null);
-    let refPedido = "";
-    const u = getFirebaseAuth().currentUser;
-    if (u) {
-      setFinalizandoPedido(true);
-      try {
-        refPedido = await crearPedidoDesdeCarrito(
-          u,
-          carrito,
-          totalPrecio,
-          telNorm
-        );
-        setCarrito([]);
-      } catch (e) {
-        console.error(e);
-        const code =
-          e && typeof e === "object" && "code" in e
-            ? String((e as { code?: string }).code)
-            : "";
-        const detalleReglas =
-          code === "permission-denied"
-            ? " Firebase aún no tiene permiso para «pedidos»: en Firebase Console → Firestore → Reglas, publicá el contenido del archivo firestore.rules de este proyecto (botón Publicar)."
-            : "";
-        const msg =
-          e instanceof Error && e.message
-            ? ` ${e.message}`
-            : "";
+    setFinalizandoPedido(true);
+
+    try {
+      const frescos = await cargarProductos();
+      if (frescos.length === 0) {
+        pestañaWa?.close();
         setAvisoCheckout(
-          `No pudimos guardar el pedido en tu cuenta.${msg}${detalleReglas} Podés abrir WhatsApp igual con el enlace de abajo.`
+          "No pudimos comprobar el stock actual. Revisá tu conexión e intentá de nuevo."
         );
-      } finally {
-        setFinalizandoPedido(false);
+        return;
       }
-    }
 
-    const refBloque = refPedido
-      ? `\n\n*Referencia web (seguimiento en Mi cuenta):*\n${refPedido}`
-      : "";
-    const contactoBloque = `\n\n*Mi WhatsApp:*\n+${telNorm}`;
-    const mensaje =
-      `¡Hola! Quiero realizar un pedido en *Sangre Nómade Adventure*:\n\n${listaProductos}\n\n*Total: $${totalPrecio}*${refBloque}${contactoBloque}\n\n¿Cómo coordinamos el pago?`;
-    const urlWa = `https://wa.me/${WHATSAPP_NUMERO_TIENDA}?text=${encodeURIComponent(mensaje)}`;
+      const carritoAjustado: CartItem[] = carrito.map((item) => {
+        const p = frescos.find((pr) => pr.id === item.product.id) ?? item.product;
+        let qty = item.quantity;
+        if (typeof p.stock === "number" && qty > p.stock) {
+          qty = p.stock;
+        }
+        return { product: p, quantity: qty };
+      }).filter((i) => i.quantity > 0);
 
-    if (pestañaWa) {
-      pestañaWa.location.href = urlWa;
-    } else {
-      window.location.href = urlWa;
+      if (carritoAjustado.length === 0) {
+        pestañaWa?.close();
+        setCarrito([]);
+        setAvisoCheckout(
+          "Ya no hay stock disponible para lo que tenías en el carrito. Actualizamos el carrito."
+        );
+        return;
+      }
+
+      for (const item of carritoAjustado) {
+        const p = item.product;
+        if (typeof p.stock === "number" && item.quantity > p.stock) {
+          pestañaWa?.close();
+          setAvisoCheckout(
+            "Hay productos con cantidad mayor al stock disponible. Revisá el carrito."
+          );
+          return;
+        }
+      }
+
+      const huboRecorte =
+        carritoAjustado.length !== carrito.length ||
+        carrito.some((c) => {
+          const a = carritoAjustado.find((x) => x.product.id === c.product.id);
+          return !a || a.quantity !== c.quantity;
+        });
+      if (huboRecorte) {
+        setCarrito(carritoAjustado);
+        pestañaWa?.close();
+        setAvisoCheckout(
+          "Ajustamos las cantidades al stock que queda disponible (otro pedido pudo reservar unidades). Revisá el carrito y volvé a enviar."
+        );
+        return;
+      }
+
+      const totalAjustado = carritoAjustado.reduce(
+        (acc, item) => acc + item.product.price * item.quantity,
+        0
+      );
+
+      const listaProductos = carritoAjustado
+        .map(
+          (item) =>
+            `- ${item.product.name} x${item.quantity} ($${item.product.price * item.quantity})`
+        )
+        .join("\n");
+
+      let refPedido = "";
+      const u = getFirebaseAuth().currentUser;
+      if (u) {
+        try {
+          refPedido = await crearPedidoDesdeCarrito(
+            u,
+            carritoAjustado,
+            totalAjustado,
+            telNorm
+          );
+          setCarrito([]);
+        } catch (e) {
+          console.error(e);
+          const code =
+            e && typeof e === "object" && "code" in e
+              ? String((e as { code?: string }).code)
+              : "";
+          const detalleReglas =
+            code === "permission-denied"
+              ? " Firebase aún no tiene permiso para «pedidos»: en Firebase Console → Firestore → Reglas, publicá el contenido del archivo firestore.rules de este proyecto (botón Publicar)."
+              : "";
+          const msg =
+            e instanceof Error && e.message
+              ? ` ${e.message}`
+              : "";
+          setAvisoCheckout(
+            `No pudimos guardar el pedido en tu cuenta.${msg}${detalleReglas} Podés abrir WhatsApp igual con el enlace de abajo.`
+          );
+        }
+      }
+
+      const refBloque = refPedido
+        ? `\n\n*Referencia web (seguimiento en Mi cuenta):*\n${refPedido}`
+        : "";
+      const contactoBloque = `\n\n*Mi WhatsApp:*\n+${telNorm}`;
+      const mensaje =
+        `¡Hola! Quiero realizar un pedido en *Sangre Nómade Adventure*:\n\n${listaProductos}\n\n*Total: $${totalAjustado}*${refBloque}${contactoBloque}\n\n¿Cómo coordinamos el pago?`;
+      const urlWa = `https://wa.me/${WHATSAPP_NUMERO_TIENDA}?text=${encodeURIComponent(mensaje)}`;
+
+      if (pestañaWa) {
+        pestañaWa.location.href = urlWa;
+      } else {
+        window.location.href = urlWa;
+      }
+    } finally {
+      setFinalizandoPedido(false);
     }
   };
 
@@ -467,11 +587,23 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => setMostrarCuentaCliente(true)}
-                className="flex h-10 min-w-0 items-center justify-center rounded-full border border-[#2F3E46]/12 bg-[#F2EBD3] px-2 font-heading text-[9px] font-bold uppercase tracking-wide text-[#2F3E46] shadow-sm transition-all hover:border-[#A65D37]/35 hover:bg-[#e8dfc8] active:scale-[0.98] sm:text-[10px] sm:px-2.5 md:text-[11px] md:px-3"
+                className="relative flex h-10 min-w-0 items-center justify-center rounded-full border border-[#2F3E46]/12 bg-[#F2EBD3] px-2 font-heading text-[9px] font-bold uppercase tracking-wide text-[#2F3E46] shadow-sm transition-all hover:border-[#A65D37]/35 hover:bg-[#e8dfc8] active:scale-[0.98] sm:text-[10px] sm:px-2.5 md:text-[11px] md:px-3"
+                aria-label={
+                  usuarioTienda && notifMiCuenta > 0
+                    ? `Mi cuenta, ${notifMiCuenta} pedido(s) por confirmar`
+                    : undefined
+                }
               >
                 <span className="text-center leading-tight">
                   {usuarioTienda ? "Mi cuenta" : "Iniciar sesión"}
                 </span>
+                {usuarioTienda && notifMiCuenta > 0 && (
+                  <span
+                    className="absolute -right-0.5 -top-0.5 inline-flex min-h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded-full bg-[#A65D37] px-0.5 font-heading text-[9px] font-bold tabular-nums leading-none text-white ring-2 ring-[#F2EBD3] sm:text-[10px]"
+                  >
+                    {notifMiCuenta > 9 ? "9+" : notifMiCuenta}
+                  </span>
+                )}
               </button>
               <button
                 type="button"
@@ -598,9 +730,14 @@ export default function Home() {
                 setMostrarCuentaCliente(true);
                 setMenuMovilAbierto(false);
               }}
-              className="text-left py-2 hover:text-[#e8c9a8]"
+              className="relative flex w-full items-center gap-2 py-2 text-left hover:text-[#e8c9a8]"
             >
-              {usuarioTienda ? "Mi cuenta" : "Iniciar sesión"}
+              <span>{usuarioTienda ? "Mi cuenta" : "Iniciar sesión"}</span>
+              {usuarioTienda && notifMiCuenta > 0 && (
+                <span className="inline-flex min-h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded-full bg-[#A65D37] px-1 font-heading text-[9px] font-bold tabular-nums text-white">
+                  {notifMiCuenta > 9 ? "9+" : notifMiCuenta}
+                </span>
+              )}
             </button>
             <div className="pt-2 border-t border-white/20">
               <p className="text-xs normal-case opacity-80 mb-2">Productos por categoría</p>

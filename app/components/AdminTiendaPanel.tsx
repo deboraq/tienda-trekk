@@ -35,6 +35,7 @@ import {
   docDataAPedido,
   etiquetaEstadoPedido,
   itemsPedidoDifieren,
+  pedidoClienteConfirmoNoVistoPorAdmin,
   PEDIDO_ESTADOS,
 } from "../lib/pedidos";
 import {
@@ -202,6 +203,9 @@ export function AdminTiendaPanel({
   const [guardandoItemsPedidoId, setGuardandoItemsPedidoId] = useState<
     string | null
   >(null);
+  const [marcandoVistaConfirmacionId, setMarcandoVistaConfirmacionId] = useState<
+    string | null
+  >(null);
 
   const cargarPedidosAdmin = useCallback(async () => {
     setPedidoMsg(null);
@@ -263,10 +267,10 @@ export function AdminTiendaPanel({
   }, [open, catalogoVista, categoriasProducto, categoria]);
 
   useEffect(() => {
-    if (open && user && esCatalogAdminEmail(user.email) && tab === "pedidos") {
+    if (open && user && esCatalogAdminEmail(user.email)) {
       void cargarPedidosAdmin();
     }
-  }, [open, user, tab, cargarPedidosAdmin]);
+  }, [open, user, cargarPedidosAdmin]);
 
   useEffect(() => {
     if (!open) {
@@ -286,6 +290,10 @@ export function AdminTiendaPanel({
   }, [open]);
 
   if (!open) return null;
+
+  const notifPedidosClienteConfirmo = pedidos.filter(
+    pedidoClienteConfirmoNoVistoPorAdmin
+  ).length;
 
   const categoriaSelectValue = categoriasProducto.includes(categoria)
     ? categoria
@@ -560,6 +568,32 @@ export function AdminTiendaPanel({
       "_blank",
       "noopener,noreferrer"
     );
+  };
+
+  const marcarConfirmacionClienteVista = async (pedidoId: string) => {
+    setMarcandoVistaConfirmacionId(pedidoId);
+    setPedidoMsg(null);
+    try {
+      await updateDoc(doc(getDb(), "pedidos", pedidoId), {
+        confirmacionClienteVistaPorAdmin: true,
+        updatedAt: serverTimestamp(),
+      });
+      setPedidos((prev) =>
+        prev.map((p) =>
+          p.id === pedidoId
+            ? {
+                ...p,
+                confirmacionClienteVistaPorAdmin: true,
+                updatedAt: new Date(),
+              }
+            : p
+        )
+      );
+    } catch (err) {
+      setPedidoMsg(mensajeFirebase(err));
+    } finally {
+      setMarcandoVistaConfirmacionId(null);
+    }
   };
 
   const cambiarEstadoPedido = async (pedidoId: string, status: PedidoEstado) => {
@@ -913,14 +947,26 @@ export function AdminTiendaPanel({
                   type="button"
                   role="tab"
                   aria-selected={tab === "pedidos"}
-                  className={tabBtn("pedidos")}
+                  className={`relative ${tabBtn("pedidos")}`}
                   onClick={() => {
                     setTab("pedidos");
                     setSiteMsg(null);
                     setPedidoMsg(null);
                   }}
                 >
-                  Pedidos
+                  <span className="inline-flex items-center justify-center gap-1">
+                    Pedidos
+                    {notifPedidosClienteConfirmo > 0 && (
+                      <span
+                        className="inline-flex min-h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded-full bg-[#A65D37] px-1 font-heading text-[9px] font-bold tabular-nums leading-none text-white sm:text-[10px]"
+                        title="Cliente confirmó un pedido modificado"
+                      >
+                        {notifPedidosClienteConfirmo > 9
+                          ? "9+"
+                          : notifPedidosClienteConfirmo}
+                      </span>
+                    )}
+                  </span>
                 </button>
               </nav>
 
@@ -1429,6 +1475,32 @@ export function AdminTiendaPanel({
                               ))}
                             </select>
                           </div>
+                          {pedidoClienteConfirmoNoVistoPorAdmin(p) && (
+                            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#53634B]/35 bg-[#eef4ea] px-3 py-2.5">
+                              <span
+                                className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-[#A65D37] px-1.5 font-heading text-[11px] font-bold tabular-nums text-white"
+                                title="Nuevo"
+                              >
+                                1
+                              </span>
+                              <p className="min-w-0 flex-1 text-[11px] font-semibold leading-snug text-[#2F3E46]">
+                                Pedido confirmado: el cliente aceptó la modificación en «Mi
+                                cuenta».
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void marcarConfirmacionClienteVista(p.id)
+                                }
+                                disabled={marcandoVistaConfirmacionId === p.id}
+                                className="shrink-0 rounded-lg border border-[#53634B]/40 bg-white px-3 py-1.5 font-heading text-[10px] font-bold uppercase tracking-wide text-[#53634B] transition-colors hover:bg-[#53634B]/10 disabled:opacity-50"
+                              >
+                                {marcandoVistaConfirmacionId === p.id
+                                  ? "…"
+                                  : "Marcar visto"}
+                              </button>
+                            </div>
+                          )}
                           {p.stockCommitted && (
                             <p className="mt-1.5 text-[10px] font-medium text-[#53634B]">
                               Unidades descontadas del stock del catálogo (pedido en curso).

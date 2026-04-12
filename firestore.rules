@@ -16,6 +16,7 @@ service cloud.firestore {
         && resource.data.userId == request.auth.uid
         && resource.data.confirmacionModificacion == 'pendiente'
         && request.resource.data.confirmacionModificacion == 'aceptada'
+        && request.resource.data.confirmacionClienteVistaPorAdmin == false
         && request.resource.data.userId == resource.data.userId
         && request.resource.data.userEmail == resource.data.userEmail
         && request.resource.data.items == resource.data.items
