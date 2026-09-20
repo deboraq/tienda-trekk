@@ -1,18 +1,24 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Oswald } from "next/font/google";
+import { Barlow_Condensed, Geist_Mono, Inter, Oswald } from "next/font/google";
 import "./globals.css";
 
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL ?? "https://sangrenomadeadventure.vercel.app";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
 });
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+});
+
+const barlow = Barlow_Condensed({
+  variable: "--font-barlow",
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
 });
 
 const oswald = Oswald({
@@ -24,46 +30,46 @@ const oswald = Oswald({
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "Sangre Nómade Adventure | Equipamiento de trekking",
-    template: "%s | Sangre Nómade Adventure",
+    default: "Sangre Nómade | Outdoor & Trekking · Córdoba",
+    template: "%s | Sangre Nómade",
   },
   description:
-    "Ropa y accesorios de trekking multimarcas (Columbia, Ansilta, Lippi, Doite y más). Asesoramiento técnico para senderistas y montañistas. Envíos Argentina. Córdoba.",
+    "Ropa técnica, capas térmicas e indumentaria forjada para resistir la abrasión del granito en Los Gigantes y el viento blanco de la cordillera andina. Envíos a todo el país.",
   keywords: [
     "trekking",
     "equipamiento montaña",
-    "calzado trekking",
-    "camperas impermeables",
-    "multimarcas outdoor",
+    "camperas 3L",
+    "calzado Vibram",
+    "Sangre Nómade",
     "Córdoba",
   ],
   icons: {
-    icon: "/logo-sangre-nomade.png",
-    apple: "/logo-sangre-nomade.png",
+    icon: "/brand/isotipo-oficial.png",
+    apple: "/brand/isotipo-oficial.png",
   },
   openGraph: {
-    title: "Sangre Nómade Adventure | Equipamiento de trekking",
+    title: "Sangre Nómade | Outdoor & Trekking · Córdoba",
     description:
-      "Equipamiento de trekking: calzado técnico, camperas, mochilas y accesorios. Multimarcas con asesoramiento real de ruta. Desde Córdoba, envíos a todo el país.",
+      "Expertos en el terreno, nómades por instinto. Equipo técnico testeado en sierras y cordillera.",
     type: "website",
     locale: "es_AR",
     url: "/",
-    siteName: "Sangre Nómade Adventure",
+    siteName: "Sangre Nómade",
     images: [
       {
-        url: "/logo-sangre-nomade.png",
+        url: "/brand/isotipo-oficial.png",
         width: 512,
         height: 512,
-        alt: "Sangre Nómade Adventure — logo",
+        alt: "Sangre Nómade — isotipo",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Sangre Nómade Adventure | Equipamiento de trekking",
+    title: "Sangre Nómade | Outdoor & Trekking · Córdoba",
     description:
-      "Equipamiento de trekking multimarcas con asesoramiento técnico. Envíos Argentina.",
-    images: ["/logo-sangre-nomade.png"],
+      "Equipo técnico testeado en sierras y cordillera. Envíos a todo el país.",
+    images: ["/brand/isotipo-oficial.png"],
   },
   alternates: {
     canonical: "/",
@@ -78,7 +84,7 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${oswald.variable} antialiased`}
+        className={`${inter.variable} ${geistMono.variable} ${barlow.variable} ${oswald.variable} antialiased`}
       >
         {children}
       </body>
