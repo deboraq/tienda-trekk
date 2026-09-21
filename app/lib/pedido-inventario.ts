@@ -274,6 +274,41 @@ export async function cambiarEstadoPedidoConInventario(
   }
 }
 
+export async function eliminarPedidoConInventario(
+  pedidoId: string
+): Promise<{ ok: true } | { ok: false; mensaje: string }> {
+  try {
+    await runTransaction(getDb(), async (tx) => {
+      const pedidoRef = doc(getDb(), "pedidos", pedidoId);
+      const pedSnap = await tx.get(pedidoRef);
+      if (!pedSnap.exists()) {
+        throw new Error("Pedido no encontrado.");
+      }
+      const data = pedSnap.data() as Record<string, unknown>;
+      const itemsRaw = data.items;
+      if (data.stockCommitted === true && Array.isArray(itemsRaw)) {
+        const items: PedidoLineItem[] = itemsRaw.map((raw) => {
+          const o = raw as Record<string, unknown>;
+          return {
+            productId: String(o.productId ?? ""),
+            name: String(o.name ?? ""),
+            quantity: Number(o.quantity) || 0,
+            unitPrice: Number(o.unitPrice) || 0,
+            lineTotal: Number(o.lineTotal) || 0,
+          };
+        });
+        await aplicarDevolucionItems(tx, items);
+      }
+      tx.delete(pedidoRef);
+    });
+    return { ok: true };
+  } catch (e) {
+    const msg =
+      e instanceof Error ? e.message : "No se pudo eliminar el pedido.";
+    return { ok: false, mensaje: msg };
+  }
+}
+
 /**
  * Crea el pedido en Firestore y descuenta stock en la misma transacción (reserva inmediata
  * para que otros clientes no vean esas unidades disponibles).

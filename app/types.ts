@@ -64,4 +64,6 @@ export interface Pedido {
    * Solo `false` muestra el aviso; ausente o `true` = sin aviso (pedidos viejos o ya vistos).
    */
   confirmacionClienteVistaPorAdmin?: boolean;
+  /** Motivo del último ajuste de ítems (panel admin). */
+  motivoModificacion?: string;
 }

@@ -20,18 +20,18 @@ import {
 } from "firebase/firestore";
 import { FirebaseError } from "firebase/app";
 import { getDb, getFirebaseAuth } from "../firebase/config";
-import {
-  docDataAPedido,
-  etiquetaEstadoPedido,
-  pedidoTieneConfirmacionPendienteCliente,
-  PEDIDO_FLUJO_NORMAL,
-  indiceEnFlujoNormal,
-} from "../lib/pedidos";
-import type { Pedido, PedidoEstado } from "../types";
+import { docDataAPedido, pedidoTieneConfirmacionPendienteCliente } from "../lib/pedidos";
+import { formatARS } from "../lib/brand";
+import { urlWhatsAppTiendaConsultaGeneral } from "../lib/whatsapp";
+import type { Pedido, Product } from "../types";
+import Image from "next/image";
+import { IconLogout, IconMail, IconPhone, IconSearch, IconUserCircle, IconWhatsApp } from "./storefront/Icons";
+import { BadgeEstado, formatTelAR, PedidoStepper } from "./panels/panel-ui";
 
 type Props = {
   open: boolean;
   onClose: () => void;
+  productos?: Product[];
 };
 
 function mensajeAuth(error: unknown): string {
@@ -72,7 +72,7 @@ function mensajeAuth(error: unknown): string {
 }
 
 const inputClass =
-  "mt-1.5 w-full rounded-xl border border-[#2F3E46]/12 bg-white px-3.5 py-2.5 text-[#2F3E46] shadow-sm outline-none transition-[box-shadow,border-color] placeholder:text-[#2F3E46]/35 focus:border-[#53634B] focus:ring-2 focus:ring-[#53634B]/20";
+  "mt-1.5 w-full rounded-lg border border-white/10 bg-[#151311] px-3.5 py-2.5 text-white outline-none placeholder:text-white/30 focus:border-[#E2781E]/50 focus:ring-1 focus:ring-[#E2781E]/30";
 
 /** La tienda tocó el pedido después del alta (estado, ítems, etc.). */
 function huboActualizacionDesdeElAlta(p: Pedido): boolean {
@@ -80,79 +80,7 @@ function huboActualizacionDesdeElAlta(p: Pedido): boolean {
   return p.updatedAt.getTime() > p.createdAt.getTime() + 500;
 }
 
-function CronologiaEstadosPedido({ status }: { status: PedidoEstado }) {
-  if (status === "cancelado") {
-    return (
-      <div className="rounded-xl border border-red-200/90 bg-red-50/95 px-3 py-3 text-xs text-red-900">
-        <p className="font-heading font-bold uppercase tracking-wide text-red-950">
-          Pedido cancelado
-        </p>
-        <p className="mt-1.5 leading-relaxed text-red-800/95">
-          Si no coincide con lo acordado, escribinos por WhatsApp.
-        </p>
-      </div>
-    );
-  }
-
-  const idx = indiceEnFlujoNormal(status);
-
-  return (
-    <ol className="list-none space-y-0 p-0">
-      {PEDIDO_FLUJO_NORMAL.map((step, i) => {
-        const hecho = i < idx;
-        const actual = i === idx;
-        const pendiente = i > idx;
-        const ultimo = i === PEDIDO_FLUJO_NORMAL.length - 1;
-        return (
-          <li key={step} className="flex gap-3">
-            <div className="flex w-7 flex-col items-center pt-0.5">
-              <span
-                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 text-[11px] font-bold leading-none ${
-                  hecho
-                    ? "border-[#53634B] bg-[#53634B] text-white"
-                    : actual
-                      ? "border-[#A65D37] bg-white text-[#A65D37] shadow-[0_0_0_3px_rgba(166,93,55,0.18)]"
-                      : "border-[#2F3E46]/15 bg-[#fefdfb] text-[#2F3E46]/35"
-                }`}
-              >
-                {hecho ? "✓" : pendiente ? String(i + 1) : "●"}
-              </span>
-              {!ultimo && (
-                <span
-                  className={`block w-0.5 flex-1 rounded-full ${hecho ? "bg-[#53634B]/35" : "bg-[#2F3E46]/12"}`}
-                  style={{ minHeight: "1rem" }}
-                  aria-hidden
-                />
-              )}
-            </div>
-            <div className={`min-w-0 flex-1 ${ultimo ? "pb-0" : "pb-3"} pt-0.5`}>
-              <p
-                className={`text-sm font-medium ${
-                  actual ? "text-[#2F3E46]" : hecho ? "text-[#2F3E46]/80" : "text-[#2F3E46]/42"
-                }`}
-              >
-                {etiquetaEstadoPedido(step)}
-              </p>
-              {actual && (
-                <p className="mt-0.5 font-heading text-[10px] font-bold uppercase tracking-wide text-[#A65D37]">
-                  Estado actual
-                </p>
-              )}
-              {pendiente && (
-                <p className="mt-0.5 text-[10px] text-[#2F3E46]/38">Pendiente</p>
-              )}
-              {hecho && !actual && (
-                <p className="mt-0.5 text-[10px] text-[#53634B]/75">Completado</p>
-              )}
-            </div>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-export function CuentaClientePanel({ open, onClose }: Props) {
+export function CuentaClientePanel({ open, onClose, productos = [] }: Props) {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [modo, setModo] = useState<"login" | "registro">("login");
@@ -163,10 +91,23 @@ export function CuentaClientePanel({ open, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [cargandoPedidos, setCargandoPedidos] = useState(false);
-  const [pedidoExpandidoId, setPedidoExpandidoId] = useState<string | null>(null);
   const [mostrarRecuperar, setMostrarRecuperar] = useState(false);
   const [recuperarEnviado, setRecuperarEnviado] = useState(false);
   const [accionPedidoId, setAccionPedidoId] = useState<string | null>(null);
+  const [busqueda, setBusqueda] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    const html = document.documentElement;
+    const prevHtml = html.style.overflow;
+    const prevBody = document.body.style.overflow;
+    html.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      html.style.overflow = prevHtml;
+      document.body.style.overflow = prevBody;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -221,7 +162,6 @@ export function CuentaClientePanel({ open, onClose }: Props) {
       setModo("login");
       setPassword("");
       setPassword2("");
-      setPedidoExpandidoId(null);
       setMostrarRecuperar(false);
       setRecuperarEnviado(false);
     }
@@ -379,478 +319,394 @@ export function CuentaClientePanel({ open, onClose }: Props) {
     }
   };
 
+  const nActivos = pedidos.filter(
+    (p) => p.status !== "cancelado" && p.status !== "entregado"
+  ).length;
+  const q = busqueda.trim().toLowerCase();
+  const pedidosFiltrados = q
+    ? pedidos.filter(
+        (p) =>
+          p.id.toLowerCase().includes(q) ||
+          p.items.some((it) => it.name.toLowerCase().includes(q))
+      )
+    : pedidos;
+  const telefono = pedidos.find((p) => p.clientPhone)?.clientPhone;
+  const pedidoAlerta = pedidos.find(pedidoTieneConfirmacionPendienteCliente);
+
+  const imagenProducto = (productId: string) =>
+    productos.find((x) => x.id === productId)?.image;
+
   return (
     <div
-      className="fixed inset-0 z-[215] flex items-center justify-center bg-[#2F3E46]/55 p-3 backdrop-blur-[2px] sm:p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-[215] overflow-x-hidden overflow-y-auto overscroll-contain bg-[#151311] text-[#F3F4F6]"
       role="dialog"
       aria-modal="true"
       aria-labelledby="cuenta-cliente-title"
     >
-      <div
-        className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-[#2F3E46]/12 bg-[#F2EBD3]/40 shadow-[0_24px_64px_-16px_rgba(47,62,70,0.45)] backdrop-blur-sm sm:max-w-md"
-        onClick={(ev) => ev.stopPropagation()}
-      >
-        <header className="shrink-0 border-b border-white/40 bg-[#53634B] px-4 py-4 text-[#F2EBD3] sm:px-5">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="font-heading text-[10px] font-semibold uppercase tracking-[0.2em] text-[#e8c9a8]">
+      <header className="sticky top-0 z-10 border-b border-white/[0.08] bg-[#2C2926]">
+        <div className="mx-auto flex max-w-[1400px] items-center gap-3 px-4 py-3 md:grid md:grid-cols-[1fr_28rem_1fr] md:gap-4">
+          <button type="button" onClick={onClose} className="flex shrink-0 items-center gap-3 text-left">
+            <Image
+              src="/brand/isotipo-oficial.png"
+              alt="Sangre Nómade"
+              width={80}
+              height={80}
+              className="h-14 w-14 shrink-0 object-contain md:h-16 md:w-16"
+              priority
+            />
+            <span className="flex flex-col justify-center gap-1.5">
+              <span className="block font-heading text-lg font-bold uppercase leading-none tracking-[0.04em] text-[#F4F0EA] md:text-[1.65rem]">
                 Sangre Nómade
-              </p>
-              <h2
-                id="cuenta-cliente-title"
-                className="font-heading text-lg font-bold uppercase tracking-wide text-white sm:text-xl"
+              </span>
+              <span
+                className="hidden whitespace-nowrap font-heading text-[13px] font-bold uppercase leading-none text-[#E8B892] md:block"
+                style={{ letterSpacing: "0.38em" }}
               >
-                Mi cuenta
-              </h2>
+                Outdoor & Trekking · Córdoba
+              </span>
+            </span>
+          </button>
+          <div className="hidden md:block">
+            <label className="flex h-14 w-full items-center gap-2.5 rounded-md border border-white/12 bg-[#1a1714] px-2.5">
+              <span className="shrink-0 text-white/40">
+                <IconSearch className="h-[18px] w-[18px]" />
+              </span>
+              <input
+                type="search"
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Buscar camperas 3L, calzado Vibram, equipo..."
+                className="h-10 min-w-0 flex-1 rounded-[3px] border border-white/18 bg-transparent px-3 text-[13px] text-[#D1D5DB] outline-none placeholder:text-white/38 focus:border-white/30 [&::-webkit-search-cancel-button]:hidden"
+                aria-label="Buscar productos, pedidos o guías"
+              />
+            </label>
+          </div>
+          <div className="ml-auto flex h-10 items-center justify-end gap-4 md:ml-0 md:gap-5">
+            <div className="flex h-10 items-center gap-3">
+              <a
+                href={urlWhatsAppTiendaConsultaGeneral()}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex h-10 items-center gap-2 rounded-md border border-white/10 bg-[#1d1b19] px-3 font-heading text-[11px] font-bold uppercase tracking-[0.12em] text-white hover:border-[#25d366]/40"
+              >
+                <IconWhatsApp className="h-4 w-4 text-[#25d366]" />
+                WhatsApp
+              </a>
+              {user && <span className="hidden h-6 w-px bg-white/20 lg:block" aria-hidden />}
             </div>
+            {user && (
+              <span className="hidden h-10 items-center gap-2.5 lg:inline-flex">
+                <IconUserCircle className="h-8 w-8 text-[#E8B892]" />
+                <span className="text-[12px] leading-tight">
+                  <span className="block text-[#9CA3AF]">Sesión iniciada</span>
+                  <span className="block max-w-[12rem] truncate font-medium text-white">{user.email}</span>
+                </span>
+              </span>
+            )}
             <button
               type="button"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-lg text-white transition-colors hover:bg-white/20"
-              onClick={onClose}
-              aria-label="Cerrar"
+              onClick={() => (user ? signOut(getFirebaseAuth()) : onClose())}
+              className="rounded-md p-2 text-[#9CA3AF] hover:text-white"
+              aria-label={user ? "Cerrar sesión" : "Volver a la tienda"}
             >
-              ✕
+              <IconLogout className="h-5 w-5" />
             </button>
           </div>
-        </header>
+        </div>
+      </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto bg-[#fefdfb] px-4 py-4 text-sm text-[#2F3E46] sm:px-5 sm:py-5">
-          {!authReady ? (
-            <p className="py-8 text-center text-sm italic text-[#2F3E46]/50">
-              Cargando…
-            </p>
-          ) : !user ? (
-            <div className="space-y-4">
-              <div className="flex gap-1 rounded-2xl border border-[#2F3E46]/10 bg-[#2F3E46]/[0.06] p-1">
-                <button
-                  type="button"
-                  className={`flex-1 rounded-xl py-2.5 font-heading text-xs font-bold uppercase tracking-wider transition-all ${
-                    modo === "login"
-                      ? "bg-[#fefdfb] text-[#2F3E46] shadow-md ring-1 ring-[#2F3E46]/10"
-                      : "text-[#2F3E46]/65"
-                  }`}
-                  onClick={() => {
-                    setModo("login");
-                    setError(null);
-                  }}
-                >
-                  Entrar
-                </button>
-                <button
-                  type="button"
-                  className={`flex-1 rounded-xl py-2.5 font-heading text-xs font-bold uppercase tracking-wider transition-all ${
-                    modo === "registro"
-                      ? "bg-[#fefdfb] text-[#2F3E46] shadow-md ring-1 ring-[#2F3E46]/10"
-                      : "text-[#2F3E46]/65"
-                  }`}
-                  onClick={() => {
-                    setModo("registro");
-                    setError(null);
-                  }}
-                >
-                  Registrarme
-                </button>
-              </div>
-
-              <p className="text-xs leading-relaxed text-[#2F3E46]/70">
-                Con una cuenta, al enviar el pedido por WhatsApp guardamos el
-                carrito en la nube y podés ver el estado acá (recibido, envío,
-                etc.).
-              </p>
-
-              {modo === "login" && mostrarRecuperar ? (
-                <form
-                  onSubmit={handleRecuperarPassword}
-                  className="space-y-4 rounded-2xl border border-[#2F3E46]/10 bg-white p-5 shadow-sm"
-                >
-                  <p className="text-xs leading-relaxed text-[#2F3E46]/75">
-                    Te enviamos un enlace a tu correo para elegir una contraseña nueva (revisá también spam).
-                  </p>
-                  <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
-                      Email de la cuenta
-                    </span>
-                    <input
-                      type="email"
-                      autoComplete="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className={inputClass}
-                      required
-                    />
-                  </label>
-                  {recuperarEnviado && (
-                    <p className="rounded-xl border border-[#53634B]/25 bg-[#53634B]/10 px-3 py-2 text-xs text-[#2F3E46]">
-                      Si ese email está registrado, vas a recibir un enlace para restablecer la contraseña.
-                    </p>
-                  )}
-                  {error && (
-                    <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">
-                      {error}
-                    </p>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full rounded-xl bg-[#53634B] py-3.5 font-heading text-sm font-bold uppercase tracking-wide text-white shadow-md transition-opacity hover:bg-[#3d4a38] disabled:opacity-55"
-                  >
-                    {loading ? "Enviando…" : "Enviar enlace"}
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full text-center font-heading text-xs font-bold uppercase tracking-wide text-[#A65D37] underline-offset-2 hover:underline"
-                    onClick={() => {
-                      setMostrarRecuperar(false);
-                      setError(null);
-                      setRecuperarEnviado(false);
-                    }}
-                  >
-                    Volver al inicio de sesión
-                  </button>
-                </form>
-              ) : modo === "login" ? (
-                <form
-                  onSubmit={handleLogin}
-                  className="space-y-4 rounded-2xl border border-[#2F3E46]/10 bg-white p-5 shadow-sm"
-                >
-                  <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
-                      Email
-                    </span>
-                    <input
-                      type="email"
-                      autoComplete="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className={inputClass}
-                      required
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
-                      Contraseña
-                    </span>
-                    <input
-                      type="password"
-                      autoComplete="current-password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className={inputClass}
-                      required
-                    />
-                  </label>
-                  {error && (
-                    <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">
-                      {error}
-                    </p>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full rounded-xl bg-[#53634B] py-3.5 font-heading text-sm font-bold uppercase tracking-wide text-white shadow-md transition-opacity hover:bg-[#3d4a38] disabled:opacity-55"
-                  >
-                    {loading ? "Entrando…" : "Entrar"}
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full text-center font-heading text-xs font-semibold text-[#53634B] underline-offset-2 hover:underline"
-                    onClick={() => {
-                      setMostrarRecuperar(true);
-                      setError(null);
-                      setRecuperarEnviado(false);
-                    }}
-                  >
-                    ¿Olvidaste tu contraseña?
-                  </button>
-                </form>
-              ) : (
-                <form
-                  onSubmit={handleRegistro}
-                  className="space-y-4 rounded-2xl border border-[#2F3E46]/10 bg-white p-5 shadow-sm"
-                >
-                  <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
-                      Email
-                    </span>
-                    <input
-                      type="email"
-                      autoComplete="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className={inputClass}
-                      required
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
-                      Contraseña
-                    </span>
-                    <input
-                      type="password"
-                      autoComplete="new-password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className={inputClass}
-                      required
-                      minLength={6}
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
-                      Repetir contraseña
-                    </span>
-                    <input
-                      type="password"
-                      autoComplete="new-password"
-                      value={password2}
-                      onChange={(e) => setPassword2(e.target.value)}
-                      className={inputClass}
-                      required
-                      minLength={6}
-                    />
-                  </label>
-                  {error && (
-                    <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">
-                      {error}
-                    </p>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full rounded-xl bg-[#A65D37] py-3.5 font-heading text-sm font-bold uppercase tracking-wide text-white shadow-md transition-opacity hover:opacity-95 disabled:opacity-55"
-                  >
-                    {loading ? "Creando cuenta…" : "Crear cuenta"}
-                  </button>
-                </form>
-              )}
+      <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+        {!authReady ? (
+          <p className="py-16 text-center text-sm text-[#9CA3AF]">Cargando…</p>
+        ) : !user ? (
+          <div className="mx-auto max-w-md space-y-4">
+            <h1 id="cuenta-cliente-title" className="font-heading text-2xl font-bold uppercase tracking-wider text-white">
+              Mi cuenta
+            </h1>
+            <div className="flex gap-1 rounded-lg border border-white/10 bg-[#1D1B19] p-1">
+              <button
+                type="button"
+                className={`flex-1 rounded-md py-2.5 font-heading text-xs font-bold uppercase tracking-wider ${
+                  modo === "login" ? "bg-[#E2781E] text-black" : "text-[#9CA3AF]"
+                }`}
+                onClick={() => {
+                  setModo("login");
+                  setError(null);
+                }}
+              >
+                Entrar
+              </button>
+              <button
+                type="button"
+                className={`flex-1 rounded-md py-2.5 font-heading text-xs font-bold uppercase tracking-wider ${
+                  modo === "registro" ? "bg-[#E2781E] text-black" : "text-[#9CA3AF]"
+                }`}
+                onClick={() => {
+                  setModo("registro");
+                  setError(null);
+                }}
+              >
+                Registrarme
+              </button>
             </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#2F3E46]/10 pb-4">
-                <span className="max-w-full truncate rounded-full border border-[#2F3E46]/10 bg-[#F2EBD3]/60 px-3 py-1.5 text-[11px] text-[#2F3E46]/80">
+            <p className="text-sm text-[#9CA3AF]">
+              Con una cuenta, al enviar el pedido por WhatsApp guardamos el carrito y podés ver el estado acá.
+            </p>
+            {modo === "login" && mostrarRecuperar ? (
+              <form onSubmit={handleRecuperarPassword} className="space-y-4 rounded-xl border border-white/[0.08] bg-[#1D1B19] p-5">
+                <p className="text-xs text-[#9CA3AF]">Te enviamos un enlace a tu correo para elegir una contraseña nueva.</p>
+                <label className="block">
+                  <span className="font-heading text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">Email de la cuenta</span>
+                  <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} required />
+                </label>
+                {recuperarEnviado && (
+                  <p className="rounded-lg border border-emerald-500/30 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-300">
+                    Si ese email está registrado, vas a recibir un enlace.
+                  </p>
+                )}
+                {error && <p className="rounded-lg bg-red-950/50 px-3 py-2 text-xs text-red-300">{error}</p>}
+                <button type="submit" disabled={loading} className="w-full rounded-lg bg-[#E2781E] py-3 font-heading text-sm font-bold uppercase tracking-wide text-black hover:bg-[#C96614] disabled:opacity-55">
+                  {loading ? "Enviando…" : "Enviar enlace"}
+                </button>
+                <button type="button" className="w-full text-center text-xs text-[#E8A882]" onClick={() => { setMostrarRecuperar(false); setError(null); setRecuperarEnviado(false); }}>
+                  Volver al inicio de sesión
+                </button>
+              </form>
+            ) : modo === "login" ? (
+              <form onSubmit={handleLogin} className="space-y-4 rounded-xl border border-white/[0.08] bg-[#1D1B19] p-5">
+                <label className="block">
+                  <span className="font-heading text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">Email</span>
+                  <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} required />
+                </label>
+                <label className="block">
+                  <span className="font-heading text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">Contraseña</span>
+                  <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputClass} required />
+                </label>
+                {error && <p className="rounded-lg bg-red-950/50 px-3 py-2 text-xs text-red-300">{error}</p>}
+                <button type="submit" disabled={loading} className="w-full rounded-lg bg-[#E2781E] py-3 font-heading text-sm font-bold uppercase tracking-wide text-black hover:bg-[#C96614] disabled:opacity-55">
+                  {loading ? "Entrando…" : "Entrar"}
+                </button>
+                <button type="button" className="w-full text-center text-xs text-[#9CA3AF] hover:text-white" onClick={() => { setMostrarRecuperar(true); setError(null); setRecuperarEnviado(false); }}>
+                  ¿Olvidaste tu contraseña?
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleRegistro} className="space-y-4 rounded-xl border border-white/[0.08] bg-[#1D1B19] p-5">
+                <label className="block">
+                  <span className="font-heading text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">Email</span>
+                  <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} required />
+                </label>
+                <label className="block">
+                  <span className="font-heading text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">Contraseña</span>
+                  <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputClass} required minLength={6} />
+                </label>
+                <label className="block">
+                  <span className="font-heading text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">Repetir contraseña</span>
+                  <input type="password" autoComplete="new-password" value={password2} onChange={(e) => setPassword2(e.target.value)} className={inputClass} required minLength={6} />
+                </label>
+                {error && <p className="rounded-lg bg-red-950/50 px-3 py-2 text-xs text-red-300">{error}</p>}
+                <button type="submit" disabled={loading} className="w-full rounded-lg bg-[#E2781E] py-3 font-heading text-sm font-bold uppercase tracking-wide text-black hover:bg-[#C96614] disabled:opacity-55">
+                  {loading ? "Creando cuenta…" : "Crear cuenta"}
+                </button>
+              </form>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="flex flex-col gap-5 rounded-xl border border-white/[0.08] bg-[#1D1B19] p-6 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-4">
+                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#E2781E]/15 text-[#E8A882]">
+                  <IconUserCircle className="h-8 w-8" />
+                </span>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <h1 id="cuenta-cliente-title" className="font-heading text-2xl font-bold uppercase tracking-wider text-white">
+                      Mi cuenta
+                    </h1>
+                    <span className="rounded-full border border-emerald-500/30 bg-emerald-950/60 px-2.5 py-0.5 font-heading text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+                      • Cliente verificado
+                    </span>
+                  </div>
+                  <p className="mt-1.5 max-w-md text-sm leading-relaxed text-[#9CA3AF]">
+                    Gestioná tus compras recientes, el estado de tus envíos y tus datos de contacto.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-[#151311] px-3 py-2 text-xs text-[#D1D5DB]">
+                  <IconMail className="h-3.5 w-3.5 text-[#9CA3AF]" />
                   {user.email}
                 </span>
+                <span className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-[#151311] px-3 py-2 text-xs text-[#D1D5DB]">
+                  <IconPhone className="h-3.5 w-3.5 text-[#25d366]" />
+                  {formatTelAR(telefono)}
+                </span>
+              </div>
+            </div>
+
+            {error && <p className="rounded-xl bg-red-950/50 px-4 py-3 text-sm text-red-300" role="alert">{error}</p>}
+
+            {pedidoAlerta && (
+              <div className="flex flex-col items-start justify-between gap-4 rounded-xl border border-[#E2781E]/40 bg-[#1F1B16] p-5 md:flex-row md:items-center">
+                <div className="flex gap-3">
+                  <span className="mt-0.5 text-[#E2781E]" aria-hidden>🔔</span>
+                  <div>
+                    <p className="font-heading text-sm font-bold uppercase tracking-wide text-[#E8A882]">
+                      La tienda actualizó este pedido
+                    </p>
+                    <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[#D1D5DB]">
+                      Se ajustaron cantidades o ítems por disponibilidad de stock en nuestro depósito central de Córdoba. Podés confirmar los cambios para autorizar el despacho inmediato o consultar tus dudas por WhatsApp.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
+                  <button
+                    type="button"
+                    disabled={accionPedidoId === pedidoAlerta.id}
+                    onClick={() => void aceptarPedidoModificado(pedidoAlerta)}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#E2781E] px-5 py-2.5 font-heading text-xs font-bold uppercase tracking-wide text-black hover:bg-[#C96614] disabled:opacity-50"
+                  >
+                    {accionPedidoId === pedidoAlerta.id ? "Procesando…" : "Aceptar cambios"}
+                  </button>
+                  <a
+                    href={urlWhatsAppTiendaConsultaGeneral()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-[#2C2926] px-4 py-2.5 font-heading text-xs font-semibold uppercase tracking-wide text-white hover:bg-[#3A342E]"
+                  >
+                    <IconWhatsApp className="h-4 w-4" /> Consultar por WhatsApp
+                  </a>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <h2 className="flex items-center gap-2 font-heading text-lg font-bold uppercase tracking-wider text-white">
+                Mis pedidos
+                <span className="rounded-full bg-white/10 px-2 py-0.5 font-heading text-[10px] font-bold text-[#E8A882]">
+                  {nActivos} activos
+                </span>
+                {nPedidosModifPendiente > 0 && (
+                  <span className="rounded-full bg-[#E2781E] px-2 py-0.5 font-heading text-[10px] font-bold text-black">
+                    {nPedidosModifPendiente} por confirmar
+                  </span>
+                )}
+              </h2>
+              <p className="text-xs text-[#9CA3AF]">Actualizaciones en tiempo real</p>
+            </div>
+
+            {cargandoPedidos ? (
+              <p className="py-10 text-center text-sm text-[#9CA3AF]">Cargando pedidos…</p>
+            ) : pedidosFiltrados.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-white/15 bg-[#1D1B19] py-12 text-center text-sm text-[#9CA3AF]">
+                Todavía no tenés pedidos guardados. Iniciá sesión antes de enviar el carrito por WhatsApp para que quede registrado acá.
+              </div>
+            ) : (
+              <ul className="space-y-6">
+                {pedidosFiltrados.map((p) => (
+                  <li key={p.id} className="space-y-6 rounded-xl border border-white/[0.08] bg-[#1D1B19] p-6">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="flex items-center gap-2 font-heading text-[11px] font-bold uppercase tracking-wider text-[#E8A882]">
+                          <span className="h-2 w-2 rounded-full bg-[#E2781E]" />
+                          Código de pedido: <span className="font-mono text-white">#{p.id}</span>
+                        </p>
+                        <p className="mt-1 text-xs text-[#9CA3AF]">
+                          Realizado el{" "}
+                          {p.createdAt
+                            ? p.createdAt.toLocaleString("es-AR", { dateStyle: "long", timeStyle: "short" })
+                            : "—"}{" "}
+                          · Córdoba
+                        </p>
+                      </div>
+                      <BadgeEstado estado={p.status} />
+                    </div>
+
+                    <div className="grid gap-6 md:grid-cols-2">
+                      <div>
+                        <p className="mb-3 font-heading text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+                          Detalle de compra
+                        </p>
+                        <ul className="space-y-3">
+                          {p.items.map((it, i) => {
+                            const img = imagenProducto(it.productId);
+                            return (
+                              <li key={`${p.id}-${i}`} className="flex gap-3">
+                                <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-black/40">
+                                  {img ? (
+                                    <img src={img} alt="" className="h-full w-full object-cover" />
+                                  ) : (
+                                    <div className="flex h-full w-full items-center justify-center text-[10px] text-[#9CA3AF]">SN</div>
+                                  )}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="font-heading text-base font-bold uppercase leading-tight text-white">{it.name}</p>
+                                  <p className="mt-1 text-xs font-medium text-[#E8A882]">
+                                    Cantidad: {it.quantity} {it.quantity === 1 ? "unidad" : "unidades"} · ${formatARS(it.unitPrice)} c/u
+                                  </p>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {p.clientPhone && (
+                          <p className="mt-4 flex justify-between gap-4 border-t border-white/10 pt-3 text-xs text-[#9CA3AF]">
+                            <span>Contacto para la entrega:</span>
+                            <span className="text-white">{formatTelAR(p.clientPhone)}</span>
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="space-y-2 rounded-lg border border-white/5 bg-[#151311] p-4">
+                        <p className="font-heading text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">Resumen de pago</p>
+                        <div className="flex justify-between text-sm text-[#D1D5DB]">
+                          <span>Subtotal productos ({p.items.reduce((s, i) => s + i.quantity, 0)})</span>
+                          <span>${formatARS(p.total)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-[#D1D5DB]">Costo de envío</span>
+                          <span className="font-bold text-emerald-400">GRATIS</span>
+                        </div>
+                        <div className="my-2 border-t border-white/10" />
+                        <div className="flex items-end justify-between">
+                          <span className="font-heading text-xs uppercase tracking-wider text-[#9CA3AF]">Total a pagar</span>
+                          <span className="text-2xl font-black text-[#E2781E]">${formatARS(p.total)}</span>
+                        </div>
+                        <div className="flex justify-between pt-1 text-xs text-[#9CA3AF]">
+                          <span>Pago: Transferencia bancaria</span>
+                          <span className="font-medium text-emerald-400">✓ Aprobado</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <PedidoStepper status={p.status} />
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="flex flex-col items-center justify-between gap-3 border-t border-white/[0.08] pt-6 sm:flex-row">
+              <p className="text-xs text-[#9CA3AF]">Sangre Nómade · Tienda oficial de montaña y aventura</p>
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                 <button
                   type="button"
-                  onClick={() => signOut(getFirebaseAuth())}
-                  className="rounded-full border-2 border-[#A65D37]/40 px-4 py-1.5 font-heading text-[11px] font-bold uppercase tracking-wide text-[#A65D37] transition-colors hover:bg-[#A65D37]/10"
+                  onClick={onClose}
+                  className="rounded-lg bg-[#2C2926] px-5 py-2.5 font-heading text-xs font-bold uppercase tracking-wide text-white hover:bg-[#3A342E]"
                 >
-                  Salir
+                  ← Volver a la tienda
                 </button>
+                <a
+                  href={urlWhatsAppTiendaConsultaGeneral()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center rounded-lg bg-[#E2781E] px-6 py-2.5 font-heading text-xs font-bold uppercase tracking-wide text-black hover:bg-[#C96614]"
+                >
+                  Ayuda y soporte
+                </a>
               </div>
-
-              {error && (
-                <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
-                  {error}
-                </p>
-              )}
-
-              <div>
-                <h3 className="flex flex-wrap items-center gap-2 font-heading text-sm font-bold uppercase tracking-wide text-[#2F3E46]">
-                  Mis pedidos
-                  {nPedidosModifPendiente > 0 && (
-                    <span
-                      className="inline-flex min-h-[1.25rem] min-w-[1.25rem] items-center justify-center rounded-full bg-[#A65D37] px-1 font-heading text-[10px] font-bold tabular-nums leading-none text-white"
-                      title="Tenés pedidos por confirmar"
-                    >
-                      {nPedidosModifPendiente > 9 ? "9+" : nPedidosModifPendiente}
-                    </span>
-                  )}
-                </h3>
-                <p className="mt-1 text-xs text-[#2F3E46]/65">
-                  El estado lo actualiza el equipo. Si la tienda ajusta tu pedido, te
-                  pediremos confirmación acá (y podés coordinar por WhatsApp).
-                </p>
-              </div>
-
-              {cargandoPedidos ? (
-                <p className="py-6 text-center text-sm italic text-[#2F3E46]/50">
-                  Cargando pedidos…
-                </p>
-              ) : pedidos.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-[#2F3E46]/20 bg-white/80 py-10 text-center text-sm text-[#2F3E46]/55">
-                  Todavía no tenés pedidos guardados. Iniciá sesión antes de
-                  enviar el carrito por WhatsApp para que quede registrado acá.
-                </div>
-              ) : (
-                <ul className="space-y-3">
-                  {pedidos.map((p) => {
-                    const expandido = pedidoExpandidoId === p.id;
-                    const esperaConfirmacion =
-                      pedidoTieneConfirmacionPendienteCliente(p);
-                    return (
-                      <li
-                        key={p.id}
-                        className="overflow-hidden rounded-2xl border border-[#2F3E46]/12 bg-white shadow-sm"
-                      >
-                        <button
-                          type="button"
-                          className="flex w-full items-start gap-2 border-b border-[#2F3E46]/8 bg-[#fefdfb] px-4 py-3 text-left transition-colors hover:bg-[#F2EBD3]/40"
-                          onClick={() =>
-                            setPedidoExpandidoId((id) =>
-                              id === p.id ? null : p.id
-                            )
-                          }
-                          aria-expanded={expandido}
-                          aria-controls={`pedido-detalle-${p.id}`}
-                          id={`pedido-cabecera-${p.id}`}
-                        >
-                          <span
-                            className="mt-0.5 shrink-0 text-[#53634B] transition-transform duration-200"
-                            style={{
-                              transform: expandido ? "rotate(90deg)" : "rotate(0deg)",
-                            }}
-                            aria-hidden
-                          >
-                            ▸
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="font-heading text-[10px] font-bold uppercase tracking-wider text-[#A65D37]">
-                              Pedido
-                              {esperaConfirmacion && (
-                                <span
-                                  className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-[#A65D37]/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#8b4510]"
-                                  title="La tienda modificó el pedido"
-                                >
-                                  <span
-                                    className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#A65D37]"
-                                    aria-hidden
-                                  />
-                                  Confirmar
-                                </span>
-                              )}
-                            </p>
-                            <p className="text-xs font-medium text-[#2F3E46]">
-                              {p.createdAt
-                                ? p.createdAt.toLocaleString("es-AR", {
-                                    dateStyle: "short",
-                                    timeStyle: "short",
-                                  })
-                                : "—"}
-                            </p>
-                            <p className="mt-1 text-[11px] text-[#2F3E46]/55">
-                              Tocá para ver la cronología de estados
-                            </p>
-                          </div>
-                          <div className="flex shrink-0 flex-col items-end gap-1">
-                            {esperaConfirmacion && (
-                              <span
-                                className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-[#A65D37] px-1.5 font-heading text-[10px] font-bold tabular-nums leading-none text-white"
-                                title="Pedido modificado: confirmá o rechazá"
-                              >
-                                1
-                              </span>
-                            )}
-                            <span className="rounded-full bg-[#53634B]/14 px-2.5 py-1 text-center font-heading text-[10px] font-bold uppercase leading-tight tracking-wide text-[#2F3E46]">
-                              {etiquetaEstadoPedido(p.status)}
-                            </span>
-                          </div>
-                        </button>
-
-                        <div
-                          id={`pedido-detalle-${p.id}`}
-                          role="region"
-                          aria-labelledby={`pedido-cabecera-${p.id}`}
-                          className="px-4 pb-3 pt-2"
-                        >
-                          {esperaConfirmacion && (
-                            <div className="mb-3 rounded-xl border-2 border-[#A65D37]/40 bg-[#fff9f4] px-3 py-3 text-[11px] leading-snug text-[#2F3E46] shadow-sm">
-                              <p className="font-heading text-xs font-bold uppercase tracking-wide text-[#8b4510]">
-                                La tienda modificó tu pedido
-                              </p>
-                              <p className="mt-2 text-[#2F3E46]/90">
-                                Revisá los productos y el total abajo. Si te sirve como quedó,
-                                confirmá para que puedan prepararlo. Si no, rechazalo y el
-                                pedido se cancela (la tienda puede avisarte también por
-                                WhatsApp).
-                              </p>
-                              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                                <button
-                                  type="button"
-                                  disabled={accionPedidoId === p.id}
-                                  onClick={() => void aceptarPedidoModificado(p)}
-                                  className="flex-1 rounded-xl bg-[#53634B] py-2.5 font-heading text-[11px] font-bold uppercase tracking-wide text-white transition-opacity hover:opacity-95 disabled:opacity-50"
-                                >
-                                  {accionPedidoId === p.id
-                                    ? "Procesando…"
-                                    : "Confirmo el pedido así"}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={accionPedidoId === p.id}
-                                  onClick={() => void rechazarPedidoModificado(p)}
-                                  className="flex-1 rounded-xl border-2 border-red-300 bg-white py-2.5 font-heading text-[11px] font-bold uppercase tracking-wide text-red-800 transition-colors hover:bg-red-50 disabled:opacity-50"
-                                >
-                                  No lo quiero (cancelar)
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                          {huboActualizacionDesdeElAlta(p) && !esperaConfirmacion && (
-                            <div className="mb-3 rounded-xl border border-[#A65D37]/35 bg-[#fdf6f0] px-3 py-2.5 text-[11px] leading-snug text-[#5c3319] shadow-sm">
-                              <p className="font-heading font-semibold text-[#2F3E46]">
-                                La tienda actualizó este pedido
-                              </p>
-                              <p className="mt-1.5 text-[#2F3E46]/90">
-                                Los ítems, el total o el estado pueden haber cambiado
-                                respecto al envío original. Si la tienda te escribió por
-                                WhatsApp, coordiná con ellos; acá ves el detalle actualizado.
-                              </p>
-                              {p.updatedAt && (
-                                <p className="mt-2 text-[10px] text-[#2F3E46]/55">
-                                  Última actualización:{" "}
-                                  {p.updatedAt.toLocaleString("es-AR", {
-                                    dateStyle: "short",
-                                    timeStyle: "short",
-                                  })}
-                                </p>
-                              )}
-                            </div>
-                          )}
-                          <ul className="space-y-1 text-xs text-[#2F3E46]/85">
-                            {p.items.map((it, i) => (
-                              <li key={`${p.id}-${i}`}>
-                                {it.name} × {it.quantity}{" "}
-                                <span className="text-[#2F3E46]/50">
-                                  (${it.lineTotal.toLocaleString("es-AR")})
-                                </span>
-                              </li>
-                            ))}
-                          </ul>
-                          <p className="mt-2 border-t border-[#2F3E46]/8 pt-2 text-sm font-bold text-[#A65D37]">
-                            Total: ${p.total.toLocaleString("es-AR")}
-                          </p>
-                          {p.clientPhone && (
-                            <p className="mt-1 text-[11px] text-[#2F3E46]/65">
-                              Contacto WhatsApp registrado:{" "}
-                              <span className="font-mono text-[#2F3E46]">
-                                +{p.clientPhone}
-                              </span>
-                            </p>
-                          )}
-
-                          {expandido && (
-                            <div className="mt-4 rounded-xl border border-[#2F3E46]/10 bg-[#F2EBD3]/25 p-3">
-                              <p className="mb-3 font-heading text-[10px] font-bold uppercase tracking-wider text-[#2F3E46]/65">
-                                Cronología del pedido
-                              </p>
-                              <CronologiaEstadosPedido status={p.status} />
-                              <p className="mt-3 text-[10px] leading-relaxed text-[#2F3E46]/45">
-                                El equipo va actualizando el estado; cuando cambie, verás el
-                                progreso acá.
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

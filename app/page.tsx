@@ -548,6 +548,7 @@ export default function Home() {
         totalItems={totalItems}
         notifMiCuenta={notifMiCuenta}
         usuarioTienda={usuarioTienda}
+        marqueeText={textoMarqueeLed}
         onNav={onNav}
         onCart={() => setMostrarResumen((v) => !v)}
         onAccount={() => setMostrarCuentaCliente(true)}
@@ -760,6 +761,7 @@ export default function Home() {
       <CuentaClientePanel
         open={mostrarCuentaCliente}
         onClose={() => setMostrarCuentaCliente(false)}
+        productos={productos}
       />
 
       <AdminTiendaPanel

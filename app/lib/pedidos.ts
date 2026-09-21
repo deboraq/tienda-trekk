@@ -187,6 +187,10 @@ export function docDataAPedido(
     stockCommitted,
     confirmacionModificacion,
     confirmacionClienteVistaPorAdmin,
+    motivoModificacion:
+      typeof data.motivoModificacion === "string" && data.motivoModificacion.trim()
+        ? data.motivoModificacion.trim()
+        : undefined,
   };
 }
 
