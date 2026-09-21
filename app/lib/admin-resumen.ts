@@ -124,3 +124,99 @@ export function calcularResumenStock(productos: Product[]): ResumenStockAdmin {
     criticos: criticos.slice(0, 12),
   };
 }
+
+function inicioDelDia(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+function montoPedidoSafe(p: Pedido): number {
+  return typeof p.total === "number" && Number.isFinite(p.total) ? p.total : 0;
+}
+
+export type KpisAdminDia = {
+  ingresosHoy: number;
+  ingresosAyer: number;
+  deltaPctVsAyer: number | null;
+  ticketPromedioHoy: number;
+  confirmadosHoy: number;
+  aDespachar: number;
+  minutosArmadoEst: number;
+  visitasNoMedidas: true;
+};
+
+export function calcularKpisAdminDia(pedidos: Pedido[]): KpisAdminDia {
+  const hoy = inicioDelDia(new Date());
+  const ayer = hoy - 86_400_000;
+  const activosHoy = pedidos.filter((p) => {
+    const t = p.createdAt?.getTime();
+    return t !== undefined && inicioDelDia(new Date(t)) === hoy && p.status !== "cancelado";
+  });
+  const activosAyer = pedidos.filter((p) => {
+    const t = p.createdAt?.getTime();
+    return t !== undefined && inicioDelDia(new Date(t)) === ayer && p.status !== "cancelado";
+  });
+  const ingresosHoy = activosHoy.reduce((s, p) => s + montoPedidoSafe(p), 0);
+  const ingresosAyer = activosAyer.reduce((s, p) => s + montoPedidoSafe(p), 0);
+  const deltaPctVsAyer =
+    ingresosAyer > 0 ? ((ingresosHoy - ingresosAyer) / ingresosAyer) * 100 : null;
+  const aDespachar = pedidos.filter(
+    (p) => p.status === "recibido" || p.status === "en_preparacion"
+  ).length;
+  return {
+    ingresosHoy,
+    ingresosAyer,
+    deltaPctVsAyer,
+    ticketPromedioHoy: activosHoy.length ? ingresosHoy / activosHoy.length : 0,
+    confirmadosHoy: activosHoy.length,
+    aDespachar,
+    minutosArmadoEst: aDespachar * 20,
+    visitasNoMedidas: true,
+  };
+}
+
+export type FiltroEstadoPedidos =
+  | "todos"
+  | "nuevos"
+  | PedidoEstado;
+
+export type FiltroPeriodoPedidos = "todos" | "hoy" | "7d" | "mes";
+
+export function filtrarPedidosAdmin(
+  pedidos: Pedido[],
+  opts: {
+    busqueda: string;
+    estado: FiltroEstadoPedidos;
+    periodo: FiltroPeriodoPedidos;
+  }
+): Pedido[] {
+  const q = opts.busqueda.trim().toLowerCase();
+  const ahora = Date.now();
+  const hoy = inicioDelDia(new Date());
+  return pedidos.filter((p) => {
+    if (opts.estado === "nuevos") {
+      if (p.status !== "recibido") return false;
+    } else if (opts.estado !== "todos" && p.status !== opts.estado) {
+      return false;
+    }
+    if (opts.periodo === "hoy") {
+      const t = p.createdAt?.getTime();
+      if (t === undefined || inicioDelDia(new Date(t)) !== hoy) return false;
+    } else if (opts.periodo === "7d") {
+      const t = p.createdAt?.getTime();
+      if (t === undefined || t < ahora - 7 * 86_400_000) return false;
+    } else if (opts.periodo === "mes") {
+      const t = p.createdAt?.getTime();
+      if (t === undefined || t < ahora - 30 * 86_400_000) return false;
+    }
+    if (!q) return true;
+    const hay = [
+      p.id,
+      p.userEmail,
+      p.clientPhone ?? "",
+      ...p.items.map((i) => i.name),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(q);
+  });
+}

@@ -54,3 +54,57 @@ export function urlWhatsAppTiendaConsultaGeneral(): string {
     MENSAJE_WHATSAPP_CONSULTA_GENERAL
   );
 }
+
+export const PLANTILLAS_WA_ADMIN = [
+  {
+    id: "preparacion",
+    label: "Aviso de preparación iniciado",
+  },
+  {
+    id: "ajuste_stock",
+    label: "Ajuste de stock por taller",
+  },
+  {
+    id: "despacho",
+    label: "Despacho en camino",
+  },
+] as const;
+
+export type PlantillaWaAdmin = (typeof PLANTILLAS_WA_ADMIN)[number]["id"];
+
+export function construirMensajeWhatsAppPlantilla(opts: {
+  plantilla: PlantillaWaAdmin;
+  pedidoId: string;
+  items: { name: string; quantity: number }[];
+  total: number;
+}): string {
+  const lineas = opts.items
+    .map((i) => `• ${i.name} ×${i.quantity}`)
+    .join("\n");
+  const ref =
+    opts.pedidoId.length > 12 ? `${opts.pedidoId.slice(0, 8)}…` : opts.pedidoId;
+  const total = `$${opts.total.toLocaleString("es-AR")}`;
+
+  if (opts.plantilla === "preparacion") {
+    return (
+      `¡Hola! Te escribimos desde *Sangre Nómade Adventure*.\n\n` +
+      `Empezamos a armar tu pedido (ref: \`${ref}\`):\n${lineas}\n\n` +
+      `*Total estimado:* ${total}\n\n` +
+      `Te avisamos cuando esté listo para despacho. ¡Gracias!`
+    );
+  }
+  if (opts.plantilla === "despacho") {
+    return (
+      `¡Hola! Te escribimos desde *Sangre Nómade Adventure*.\n\n` +
+      `Tu pedido (ref: \`${ref}\`) ya va en camino:\n${lineas}\n\n` +
+      `*Total:* ${total}\n\n` +
+      `Cualquier duda sobre la entrega, escribinos por acá. ¡Gracias!`
+    );
+  }
+  return construirMensajeWhatsAppPedidoCliente({
+    pedidoId: opts.pedidoId,
+    items: opts.items,
+    total: opts.total,
+    pedidoActualizado: true,
+  });
+}

@@ -60,6 +60,25 @@ export function IconGrid({ className = "h-5 w-5" }: { className?: string }) {
   );
 }
 
+export function IconUserCircle({ className = "h-9 w-9" }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden>
+      <circle cx="12" cy="12" r="9.2" />
+      <circle cx="12" cy="10" r="3" />
+      <path strokeLinecap="round" d="M6.8 18.2c1.3-2.2 3.1-3.3 5.2-3.3s3.9 1.1 5.2 3.3" />
+    </svg>
+  );
+}
+
+export function IconLogout({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16 17l5-5-5-5M21 12H9" />
+    </svg>
+  );
+}
+
 export function IconPlay({ className = "h-4 w-4" }: { className?: string }) {
   return (
     <svg className={className} fill="currentColor" viewBox="0 0 24 24" aria-hidden>
@@ -115,6 +134,27 @@ export function IconWind({ className = "h-5 w-5" }: { className?: string }) {
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden>
       <path strokeLinecap="round" d="M3.5 10.2c2.4-2.2 4.6.4 6.8-1.7 2.3-2.2 4.4.4 7.4-1.4" />
       <path strokeLinecap="round" d="M5.2 15.6c2-1.8 3.8.3 5.8-1.5 2.1-1.9 3.8.3 6.8-1.2" />
+    </svg>
+  );
+}
+
+export function IconMail({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7} aria-hidden>
+      <rect x="3.2" y="5.5" width="17.6" height="13" rx="2" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 7.2l8 6.2 8-6.2" />
+    </svg>
+  );
+}
+
+export function IconPhone({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7} aria-hidden>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M6.6 3.8h2.4c.5 0 .9.3 1 .8l.6 2.4c.1.5 0 1-.4 1.3L8.8 10c.8 1.6 2.1 2.9 3.7 3.7l1.7-1.4c.3-.3.8-.5 1.3-.4l2.4.6c.5.1.8.5.8 1v2.4c0 .6-.5 1.1-1.1 1-4.9-.7-9.6-5.4-10.3-10.3-.1-.6.4-1.1 1-1.1z"
+      />
     </svg>
   );
 }

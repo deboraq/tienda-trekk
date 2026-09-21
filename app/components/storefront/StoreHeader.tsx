@@ -19,6 +19,7 @@ type Props = {
   totalItems: number;
   notifMiCuenta: number;
   usuarioTienda: User | null;
+  marqueeText: string;
   onNav: (id: NavClave) => void;
   onCart: () => void;
   onAccount: () => void;
@@ -35,6 +36,7 @@ export function StoreHeader({
   totalItems,
   notifMiCuenta,
   usuarioTienda,
+  marqueeText,
   onNav,
   onCart,
   onAccount,
@@ -127,10 +129,10 @@ export function StoreHeader({
             <button
               type="button"
               onClick={onWhatsApp}
-              className="hidden items-center gap-2 rounded-md border border-white/10 bg-[#1d1b19] px-3 py-2 font-heading text-[11px] font-bold uppercase tracking-[0.12em] text-white hover:border-[#25d366]/40 lg:inline-flex"
+              className="hidden h-10 items-center gap-2 rounded-md border border-white/10 bg-[#1d1b19] px-3 font-heading text-[11px] font-bold uppercase tracking-[0.12em] text-white hover:border-[#25d366]/40 lg:inline-flex"
             >
               <IconWhatsApp className="h-4 w-4 text-[#25d366]" />
-              WhatsApp técnico
+              WhatsApp
             </button>
             <button
               type="button"
@@ -156,7 +158,7 @@ export function StoreHeader({
             <button
               type="button"
               onClick={onCart}
-              className="inline-flex items-center gap-2 rounded-md bg-[#E2781E] px-2.5 py-2 font-heading text-[11px] font-bold uppercase tracking-[0.12em] text-black hover:bg-[#C96614] md:px-3"
+              className="inline-flex h-10 items-center gap-2 rounded-md bg-[#E2781E] px-2.5 font-heading text-[11px] font-bold uppercase tracking-[0.12em] text-black hover:bg-[#C96614] md:px-3"
               aria-label={`Carrito, ${totalItems} productos`}
             >
               <IconCart className="h-4 w-4" />
@@ -208,11 +210,11 @@ export function StoreHeader({
         </nav>
       </div>
 
-      <div className="overflow-hidden bg-[#E2781E] py-1.5 md:hidden">
-        <div className="sn-marquee-track font-heading text-[10px] font-bold uppercase tracking-[0.14em] text-black">
-          {Array.from({ length: 4 }, (_, i) => (
-            <span key={i} className="shrink-0 whitespace-nowrap px-6">
-              Córdoba, ARG · Envíos a todo el país · Asesoramiento técnico
+      <div className="overflow-hidden border-t border-white/[0.06] bg-[#1d1b19] py-1.5">
+        <div className="sn-marquee-track font-heading text-[10px] font-bold uppercase tracking-[0.18em] text-[#E8B892]">
+          {Array.from({ length: 6 }, (_, i) => (
+            <span key={i} className="shrink-0 whitespace-nowrap px-8">
+              {marqueeText}
             </span>
           ))}
         </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   signInWithEmailAndPassword,
   signOut,
@@ -39,18 +39,29 @@ import {
   PEDIDO_ESTADOS,
 } from "../lib/pedidos";
 import {
-  construirMensajeWhatsAppPedidoCliente,
+  construirMensajeWhatsAppPlantilla,
   normalizarTelefonoWa,
   urlWhatsAppParaNumero,
+  type PlantillaWaAdmin,
 } from "../lib/whatsapp";
+import { formatARS } from "../lib/brand";
+import { IconCart, IconCreditCard, IconLogout, IconSearch, IconTruck } from "./storefront/Icons";
+import { formatTelAR } from "./panels/panel-ui";
+import Image from "next/image";
+import { ModalModificarPedido } from "./ModalModificarPedido";
 import {
   actualizarInventarioPorCambioDeItemsPedido,
   cambiarEstadoPedidoConInventario,
+  eliminarPedidoConInventario,
   estadoComprometeStock,
 } from "../lib/pedido-inventario";
 import {
+  calcularKpisAdminDia,
   calcularResumenPedidos,
   calcularResumenStock,
+  filtrarPedidosAdmin,
+  type FiltroEstadoPedidos,
+  type FiltroPeriodoPedidos,
 } from "../lib/admin-resumen";
 
 type Tab = "portada" | "categorias" | "catalogo" | "resumen" | "pedidos";
@@ -198,12 +209,14 @@ export function AdminTiendaPanel({
   const [waPedidoModificado, setWaPedidoModificado] = useState<
     Record<string, boolean>
   >({});
-  /** Edición de ítems del pedido (cantidades / líneas) antes de guardar en Firestore. */
-  const [pedidoItemsEdit, setPedidoItemsEdit] = useState<{
-    pedidoId: string;
-    items: PedidoLineItem[];
-  } | null>(null);
-  const [productoParaAgregarPedido, setProductoParaAgregarPedido] = useState("");
+  /** Edición de ítems del pedido en el modal. */
+  const [pedidoEditando, setPedidoEditando] = useState<Pedido | null>(null);
+  const [busquedaPedidos, setBusquedaPedidos] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState<FiltroEstadoPedidos>("todos");
+  const [filtroPeriodo, setFiltroPeriodo] = useState<FiltroPeriodoPedidos>("todos");
+  const [waPlantilla, setWaPlantilla] = useState<Record<string, PlantillaWaAdmin>>({});
+  const [eliminandoPedidoId, setEliminandoPedidoId] = useState<string | null>(null);
+  const busquedaPedidosRef = useRef<HTMLInputElement>(null);
   const [guardandoItemsPedidoId, setGuardandoItemsPedidoId] = useState<
     string | null
   >(null);
@@ -277,6 +290,19 @@ export function AdminTiendaPanel({
   }, [open, user, cargarPedidosAdmin]);
 
   useEffect(() => {
+    if (!open) return;
+    const html = document.documentElement;
+    const prevHtml = html.style.overflow;
+    const prevBody = document.body.style.overflow;
+    html.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      html.style.overflow = prevHtml;
+      document.body.style.overflow = prevBody;
+    };
+  }, [open]);
+
+  useEffect(() => {
     if (!open) {
       setAuthError(null);
       setFormError(null);
@@ -287,16 +313,41 @@ export function AdminTiendaPanel({
       setCatalogoVista("lista");
       setEditando(null);
       setPedidos([]);
-      setPedidoItemsEdit(null);
-      setProductoParaAgregarPedido("");
+      setPedidoEditando(null);
       setGuardandoItemsPedidoId(null);
+      setBusquedaPedidos("");
+      setFiltroEstado("todos");
+      setFiltroPeriodo("todos");
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setTab("pedidos");
+        window.setTimeout(() => busquedaPedidosRef.current?.focus(), 0);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  const kpisDia = calcularKpisAdminDia(pedidos);
+  const pedidosFiltrados = filtrarPedidosAdmin(pedidos, {
+    busqueda: busquedaPedidos,
+    estado: filtroEstado,
+    periodo: filtroPeriodo,
+  });
 
   if (!open) return null;
 
   const notifPedidosClienteConfirmo = pedidos.filter(
     pedidoClienteConfirmoNoVistoPorAdmin
+  ).length;
+  const nPendientes = pedidos.filter(
+    (p) => p.status === "recibido" || p.status === "en_preparacion"
   ).length;
 
   const resumenPedidos = calcularResumenPedidos(pedidos);
@@ -564,11 +615,12 @@ export function AdminTiendaPanel({
       return;
     }
     setPedidoMsg(null);
-    const mensaje = construirMensajeWhatsAppPedidoCliente({
+    const plantilla = waPlantilla[p.id] ?? (waPedidoModificado[p.id] ? "ajuste_stock" : "preparacion");
+    const mensaje = construirMensajeWhatsAppPlantilla({
+      plantilla,
       pedidoId: p.id,
       items: p.items.map((i) => ({ name: i.name, quantity: i.quantity })),
       total: p.total,
-      pedidoActualizado: waPedidoModificado[p.id] === true,
     });
     window.open(
       urlWhatsAppParaNumero(digitos, mensaje),
@@ -648,70 +700,14 @@ export function AdminTiendaPanel({
     lineTotal: line.unitPrice * line.quantity,
   });
 
-  const abrirEdicionItemsPedido = (p: Pedido) => {
-    setPedidoMsg(null);
-    setProductoParaAgregarPedido("");
-    setPedidoItemsEdit({
-      pedidoId: p.id,
-      items: p.items.map((i) => recalcLineItem({ ...i })),
-    });
-  };
-
-  const cerrarEdicionItemsPedido = () => {
-    setPedidoItemsEdit(null);
-    setProductoParaAgregarPedido("");
-  };
-
-  const actualizarCantidadItemPedido = (index: number, raw: string) => {
-    const n = parseInt(raw, 10);
-    if (!pedidoItemsEdit) return;
-    if (Number.isNaN(n) || n < 1) return;
-    setPedidoItemsEdit((prev) => {
-      if (!prev) return prev;
-      const items = [...prev.items];
-      items[index] = recalcLineItem({ ...items[index], quantity: n });
-      return { ...prev, items };
-    });
-  };
-
-  const quitarItemPedido = (index: number) => {
-    setPedidoItemsEdit((prev) => {
-      if (!prev) return prev;
-      const items = prev.items.filter((_, i) => i !== index);
-      return { ...prev, items };
-    });
-  };
-
-  const agregarProductoAlPedidoEnEdicion = (producto: Product) => {
-    setPedidoItemsEdit((prev) => {
-      if (!prev) return prev;
-      const idx = prev.items.findIndex((l) => l.productId === producto.id);
-      let items: PedidoLineItem[];
-      if (idx >= 0) {
-        items = [...prev.items];
-        items[idx] = recalcLineItem({
-          ...items[idx],
-          quantity: items[idx].quantity + 1,
-        });
-      } else {
-        items = [
-          ...prev.items,
-          recalcLineItem({
-            productId: producto.id,
-            name: producto.name,
-            quantity: 1,
-            unitPrice: producto.price,
-            lineTotal: producto.price,
-          }),
-        ];
-      }
-      return { ...prev, items };
-    });
-  };
-
-  const guardarItemsPedidoFirestore = async () => {
-    if (!pedidoItemsEdit) return;
-    const { pedidoId, items } = pedidoItemsEdit;
+  const guardarItemsPedidoFirestore = async (opts: {
+    items: PedidoLineItem[];
+    motivo: string;
+    notificar: boolean;
+  }) => {
+    if (!pedidoEditando) return;
+    const pedidoId = pedidoEditando.id;
+    const items = opts.items;
     if (items.length === 0) {
       setPedidoMsg("El pedido tiene que tener al menos un producto.");
       return;
@@ -724,6 +720,7 @@ export function AdminTiendaPanel({
     const itemsNorm = items.map((i) => recalcLineItem(i));
     const total = itemsNorm.reduce((s, i) => s + i.lineTotal, 0);
     const hayCambioReal = itemsPedidoDifieren(pedidoActual.items, itemsNorm);
+    const marcarPendiente = hayCambioReal && opts.notificar;
     setGuardandoItemsPedidoId(pedidoId);
     setPedidoMsg(null);
     try {
@@ -733,14 +730,21 @@ export function AdminTiendaPanel({
           itemsAnteriores: pedidoActual.items,
           itemsNuevos: itemsNorm,
           stockCommitted: true,
-          marcarConfirmacionPendiente: hayCambioReal,
+          marcarConfirmacionPendiente: marcarPendiente,
         });
+        if (opts.motivo || marcarPendiente) {
+          await updateDoc(doc(getDb(), "pedidos", pedidoId), {
+            ...(opts.motivo ? { motivoModificacion: opts.motivo } : {}),
+            updatedAt: serverTimestamp(),
+          });
+        }
       } else {
         await updateDoc(doc(getDb(), "pedidos", pedidoId), {
           items: itemsNorm,
           total,
           updatedAt: serverTimestamp(),
-          ...(hayCambioReal ? { confirmacionModificacion: "pendiente" } : {}),
+          ...(marcarPendiente ? { confirmacionModificacion: "pendiente" } : {}),
+          ...(opts.motivo ? { motivoModificacion: opts.motivo } : {}),
         });
       }
       setPedidos((prev) =>
@@ -751,16 +755,25 @@ export function AdminTiendaPanel({
                 items: itemsNorm,
                 total,
                 updatedAt: new Date(),
-                confirmacionModificacion: hayCambioReal
+                motivoModificacion: opts.motivo,
+                confirmacionModificacion: marcarPendiente
                   ? "pendiente"
                   : p.confirmacionModificacion,
               }
             : p
         )
       );
+      if (opts.notificar) {
+        setWaPedidoModificado((prev) => ({ ...prev, [pedidoId]: true }));
+        setWaPlantilla((prev) => ({ ...prev, [pedidoId]: "ajuste_stock" }));
+      }
       onCatalogoActualizado();
-      cerrarEdicionItemsPedido();
-      setPedidoMsg("Pedido modificado y guardado.");
+      setPedidoEditando(null);
+      setPedidoMsg(
+        marcarPendiente
+          ? "Pedido modificado. El cliente tiene que confirmarlo en «Mi cuenta»."
+          : "Pedido modificado y guardado."
+      );
     } catch (err) {
       setPedidoMsg(mensajeFirebase(err));
     } finally {
@@ -768,225 +781,199 @@ export function AdminTiendaPanel({
     }
   };
 
+  const eliminarPedido = async (p: Pedido) => {
+    if (
+      !confirm(
+        `¿Eliminar el pedido ${p.id}? Esta acción no se puede deshacer. Si el stock ya estaba descontado, se reincorpora al catálogo.`
+      )
+    ) {
+      return;
+    }
+    setEliminandoPedidoId(p.id);
+    setPedidoMsg(null);
+    try {
+      const res = await eliminarPedidoConInventario(p.id);
+      if (!res.ok) {
+        setPedidoMsg(res.mensaje);
+        return;
+      }
+      setPedidos((prev) => prev.filter((x) => x.id !== p.id));
+      onCatalogoActualizado();
+      setPedidoMsg("Pedido eliminado.");
+    } catch (err) {
+      setPedidoMsg(mensajeFirebase(err));
+    } finally {
+      setEliminandoPedidoId(null);
+    }
+  };
+
+  const exportarPedidosCsv = () => {
+    const filas = [
+      ["id", "email", "telefono", "estado", "total", "fecha", "items"].join(","),
+      ...pedidosFiltrados.map((p) =>
+        [
+          p.id,
+          p.userEmail,
+          p.clientPhone ?? "",
+          p.status,
+          String(p.total),
+          p.createdAt?.toISOString() ?? "",
+          `"${p.items.map((i) => `${i.name} x${i.quantity}`).join("; ")}"`,
+        ].join(",")
+      ),
+    ];
+    const blob = new Blob([filas.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pedidos-sangre-nomade-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const inputClass =
-    "mt-1.5 w-full rounded-xl border border-[#2F3E46]/12 bg-white px-3.5 py-2.5 text-[#2F3E46] shadow-sm outline-none transition-[box-shadow,border-color] placeholder:text-[#2F3E46]/35 focus:border-[#53634B] focus:ring-2 focus:ring-[#53634B]/20";
+    "mt-1.5 w-full rounded-lg border border-white/10 bg-[#151311] px-3.5 py-2.5 text-white outline-none placeholder:text-white/30 focus:border-[#E2781E]/50 focus:ring-1 focus:ring-[#E2781E]/30";
 
   const tabBtn = (t: Tab) =>
-    `min-w-0 rounded-xl py-2.5 px-1.5 text-center font-heading text-[10px] font-bold uppercase tracking-wider transition-all sm:px-2 sm:text-xs ${
+    `min-w-0 rounded-lg px-4 py-2 text-center font-heading text-xs font-bold uppercase tracking-wider transition-all ${
       tab === t
-        ? "bg-[#fefdfb] text-[#2F3E46] shadow-md ring-1 ring-[#2F3E46]/10"
-        : "text-[#2F3E46]/65 hover:bg-[#fefdfb]/70 hover:text-[#2F3E46]"
+        ? "bg-[#E2781E] text-white shadow-md"
+        : "text-[#9CA3AF] hover:text-white"
     }`;
 
   return (
     <div
-      className="fixed inset-0 z-[220] flex items-center justify-center bg-[#2F3E46]/55 p-3 backdrop-blur-[2px] sm:p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-[220] overflow-x-hidden overflow-y-auto overscroll-contain bg-[#151311] text-[#F3F4F6]"
       role="dialog"
       aria-modal="true"
       aria-labelledby="admin-tienda-title"
     >
-      <div
-        className="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-[#2F3E46]/12 bg-[#F2EBD3]/40 shadow-[0_24px_64px_-16px_rgba(47,62,70,0.45)] backdrop-blur-sm sm:max-w-2xl"
-        onClick={(ev) => ev.stopPropagation()}
-      >
-        <header className="shrink-0 border-b border-white/40 bg-[#2F3E46] px-4 py-4 text-[#F2EBD3] sm:px-5">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="font-heading text-[10px] font-semibold uppercase tracking-[0.2em] text-[#e8c9a8]">
-                Sangre Nómade
-              </p>
-              <h2
-                id="admin-tienda-title"
-                className="font-heading text-lg font-bold uppercase tracking-wide text-white sm:text-xl"
+      <header className="sticky top-0 z-10 h-16 border-b border-white/[0.08] bg-[#151311]">
+        <div className="mx-auto flex h-full max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
+          <button type="button" onClick={onClose} className="flex items-center gap-3 text-left">
+            <span className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-white/5">
+              <Image
+                src="/brand/isotipo-oficial.png"
+                alt="Sangre Nómade"
+                width={36}
+                height={36}
+                className="h-8 w-8 object-contain"
+                priority
+              />
+            </span>
+            <span>
+              <span className="flex items-center gap-2">
+                <span className="block font-heading text-xs font-bold uppercase tracking-widest text-[#E2781E]">
+                  Sangre Nómade
+                </span>
+                <span className="hidden rounded-full border border-[#E2781E]/30 bg-[#E2781E]/10 px-2 py-0.5 font-heading text-[9px] font-bold uppercase tracking-wide text-[#E8A882] sm:inline">
+                  Tienda oficial
+                </span>
+              </span>
+              <span className="block text-sm font-semibold text-white">Panel de control de comerciante</span>
+            </span>
+          </button>
+          {user && (
+            <div className="flex items-center gap-3">
+              <span className="hidden text-right sm:block">
+                <span className="block font-heading text-[9px] font-bold uppercase tracking-widest text-[#9CA3AF]">
+                  Cuenta activa
+                </span>
+                <span className="text-xs text-[#D1D5DB]">{user.email}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => signOut(getFirebaseAuth())}
+                className="inline-flex items-center gap-1.5 rounded-md border border-white/10 px-3 py-1.5 font-heading text-xs uppercase tracking-wide text-[#9CA3AF] transition hover:text-white"
               >
-                Administrar tienda
-              </h2>
+                <IconLogout className="h-3.5 w-3.5" /> Cerrar sesión
+              </button>
             </div>
-            <button
-              type="button"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/10 text-lg text-white transition-colors hover:bg-white/20"
-              onClick={onClose}
-              aria-label="Cerrar"
-            >
-              ✕
-            </button>
-          </div>
-        </header>
+          )}
+        </div>
+      </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto bg-[#fefdfb] px-4 py-4 text-sm text-[#2F3E46] sm:px-5 sm:py-5">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
           {!authReady ? (
-            <p className="py-8 text-center text-sm italic text-[#2F3E46]/50">
-              Preparando panel…
-            </p>
+            <p className="py-16 text-center text-sm text-[#9CA3AF]">Preparando panel…</p>
           ) : !user ? (
             <form
               onSubmit={handleLogin}
-              className="mx-auto max-w-sm space-y-5 rounded-2xl border border-[#2F3E46]/10 bg-white p-6 shadow-sm"
+              className="mx-auto max-w-sm space-y-5 rounded-xl border border-white/[0.08] bg-[#1D1B19] p-6"
             >
               <div className="text-center">
-                <p className="font-heading text-xs font-bold uppercase tracking-wider text-[#A65D37]">
+                <p className="font-heading text-xs font-bold uppercase tracking-wider text-[#E2781E]">
                   Acceso administrador
                 </p>
-                <p className="mt-2 text-xs leading-relaxed text-[#2F3E46]/70">
+                <p className="mt-2 text-xs leading-relaxed text-[#9CA3AF]">
                   Mismo usuario que en Firebase Authentication y en las reglas de Firestore.
                 </p>
               </div>
               <label className="block">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
-                  Email
-                </span>
-                <input
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className={inputClass}
-                  required
-                />
+                <span className="font-heading text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">Email</span>
+                <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} required />
               </label>
               <label className="block">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
-                  Contraseña
-                </span>
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className={inputClass}
-                  required
-                />
+                <span className="font-heading text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">Contraseña</span>
+                <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputClass} required />
               </label>
-              {authError && (
-                <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">
-                  {authError}
-                </p>
-              )}
-              <button
-                type="submit"
-                disabled={authLoading}
-                className="w-full rounded-xl bg-[#53634B] py-3.5 font-heading text-sm font-bold uppercase tracking-wide text-white shadow-md transition-opacity hover:bg-[#3d4a38] disabled:opacity-55"
-              >
+              {authError && <p className="rounded-lg bg-red-950/50 px-3 py-2 text-xs text-red-300">{authError}</p>}
+              <button type="submit" disabled={authLoading} className="w-full rounded-lg bg-[#E2781E] py-3.5 font-heading text-sm font-bold uppercase tracking-wide text-black hover:bg-[#C96614] disabled:opacity-55">
                 {authLoading ? "Entrando…" : "Entrar"}
               </button>
             </form>
           ) : !esCatalogAdminEmail(user.email) ? (
-            <div className="mx-auto max-w-sm space-y-5 rounded-2xl border border-[#2F3E46]/10 bg-white p-6 text-center shadow-sm">
-              <p className="font-heading text-xs font-bold uppercase tracking-wider text-[#A65D37]">
-                Sin permisos de administración
+            <div className="mx-auto max-w-sm space-y-5 rounded-xl border border-white/[0.08] bg-[#1D1B19] p-6 text-center">
+              <p className="font-heading text-xs font-bold uppercase tracking-wider text-[#E2781E]">Sin permisos de administración</p>
+              <p className="text-xs leading-relaxed text-[#9CA3AF]">
+                Iniciaste sesión con <span className="font-medium text-white">{user.email}</span>. Solo la cuenta{" "}
+                <code className="rounded bg-[#151311] px-1 py-0.5 text-[10px] text-[#E8A882]">{CATALOG_ADMIN_EMAIL}</code> puede editar la tienda.
               </p>
-              <p className="text-xs leading-relaxed text-[#2F3E46]/75">
-                Iniciaste sesión con <span className="font-medium">{user.email}</span>. Solo la cuenta{" "}
-                <code className="rounded bg-[#F2EBD3]/80 px-1 py-0.5 text-[10px]">{CATALOG_ADMIN_EMAIL}</code> puede
-                editar la tienda (coincide con las reglas de Firestore).
-              </p>
-              <button
-                type="button"
-                onClick={() => signOut(getFirebaseAuth())}
-                className="w-full rounded-xl border-2 border-[#2F3E46]/20 py-3 font-heading text-xs font-bold uppercase tracking-wide text-[#2F3E46] transition-colors hover:bg-[#2F3E46]/5"
-              >
+              <button type="button" onClick={() => signOut(getFirebaseAuth())} className="w-full rounded-lg border border-white/10 py-3 font-heading text-xs font-bold uppercase tracking-wide text-white hover:bg-white/5">
                 Cerrar sesión
               </button>
             </div>
           ) : (
             <>
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-[#2F3E46]/10 pb-4">
-                <span className="max-w-[min(100%,14rem)] truncate rounded-full border border-[#2F3E46]/10 bg-[#F2EBD3]/60 px-3 py-1.5 text-[11px] text-[#2F3E46]/80 sm:max-w-[65%]">
-                  {user.email}
+              <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <p className="font-heading text-xs font-bold uppercase tracking-wider text-[#9CA3AF]">
+                    Sangre Nómade / Panel de gestión
+                  </p>
+                  <h1 id="admin-tienda-title" className="mt-1 font-heading text-3xl font-black uppercase tracking-wide text-white">
+                    Administrar tienda
+                  </h1>
+                </div>
+                <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-950/60 px-3 py-1 font-heading text-xs font-bold uppercase tracking-wide text-emerald-400">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+                  Tienda online activa
                 </span>
-                <button
-                  type="button"
-                  onClick={() => signOut(getFirebaseAuth())}
-                  className="rounded-full border-2 border-[#A65D37]/40 px-4 py-1.5 font-heading text-[11px] font-bold uppercase tracking-wide text-[#A65D37] transition-colors hover:bg-[#A65D37]/10"
-                >
-                  Cerrar sesión
-                </button>
               </div>
 
               <nav
-                className="mb-5 grid grid-cols-2 gap-1 rounded-2xl border border-[#2F3E46]/10 bg-[#2F3E46]/[0.06] p-1 sm:grid-cols-3 lg:grid-cols-5"
+                className="mb-6 flex flex-wrap gap-2 rounded-xl border border-white/5 bg-[#1D1B19] p-1.5"
                 role="tablist"
                 aria-label="Secciones"
               >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === "portada"}
-                  className={tabBtn("portada")}
-                  onClick={() => {
-                    setTab("portada");
-                    setSiteMsg(null);
-                    setPedidoMsg(null);
-                  }}
-                >
-                  Franja LED
+                <button type="button" role="tab" aria-selected={tab === "portada"} className={tabBtn("portada")} onClick={() => { setTab("portada"); setSiteMsg(null); setPedidoMsg(null); }}>
+                  Franja de novedades
                 </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === "categorias"}
-                  className={tabBtn("categorias")}
-                  onClick={() => {
-                    setTab("categorias");
-                    setSiteMsg(null);
-                    setPedidoMsg(null);
-                  }}
-                >
+                <button type="button" role="tab" aria-selected={tab === "categorias"} className={tabBtn("categorias")} onClick={() => { setTab("categorias"); setSiteMsg(null); setPedidoMsg(null); }}>
                   Categorías
                 </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === "catalogo"}
-                  className={tabBtn("catalogo")}
-                  onClick={() => {
-                    setTab("catalogo");
-                    setSiteMsg(null);
-                    setPedidoMsg(null);
-                    setCatalogoVista("lista");
-                    resetFormProducto();
-                  }}
-                >
+                <button type="button" role="tab" aria-selected={tab === "catalogo"} className={tabBtn("catalogo")} onClick={() => { setTab("catalogo"); setSiteMsg(null); setPedidoMsg(null); setCatalogoVista("lista"); resetFormProducto(); }}>
                   Productos
                 </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === "resumen"}
-                  className={tabBtn("resumen")}
-                  onClick={() => {
-                    setTab("resumen");
-                    setSiteMsg(null);
-                    setPedidoMsg(null);
-                  }}
-                >
-                  Resumen
+                <button type="button" role="tab" aria-selected={tab === "resumen"} className={tabBtn("resumen")} onClick={() => { setTab("resumen"); setSiteMsg(null); setPedidoMsg(null); }}>
+                  Resumen {notifPedidosClienteConfirmo > 0 ? "•" : ""}
                 </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === "pedidos"}
-                  className={`relative ${tabBtn("pedidos")}`}
-                  onClick={() => {
-                    setTab("pedidos");
-                    setSiteMsg(null);
-                    setPedidoMsg(null);
-                  }}
-                >
-                  <span className="inline-flex items-center justify-center gap-1">
-                    Pedidos
-                    {notifPedidosClienteConfirmo > 0 && (
-                      <span
-                        className="inline-flex min-h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded-full bg-[#A65D37] px-1 font-heading text-[9px] font-bold tabular-nums leading-none text-white sm:text-[10px]"
-                        title="Cliente confirmó un pedido modificado"
-                      >
-                        {notifPedidosClienteConfirmo > 9
-                          ? "9+"
-                          : notifPedidosClienteConfirmo}
-                      </span>
-                    )}
-                  </span>
+                <button type="button" role="tab" aria-selected={tab === "pedidos"} className={`inline-flex items-center gap-2 ${tabBtn("pedidos")}`} onClick={() => { setTab("pedidos"); setSiteMsg(null); setPedidoMsg(null); }}>
+                  Pedidos
+                  {nPendientes > 0 && (
+                    <span className={`rounded-full px-2 py-0.5 font-heading text-[10px] font-bold ${tab === "pedidos" ? "bg-black/20 text-white" : "bg-[#E2781E] text-white"}`}>
+                      {nPendientes} pendientes
+                    </span>
+                  )}
                 </button>
               </nav>
 
@@ -994,8 +981,8 @@ export function AdminTiendaPanel({
                 <div
                   className={`mb-4 rounded-xl border px-3 py-2.5 text-xs ${
                     siteMsg.includes("guardad") || siteMsg.includes("Guardad")
-                      ? "border-[#53634B]/25 bg-[#53634B]/8 text-[#2F3E46]"
-                      : "border-red-200 bg-red-50 text-red-800"
+                      ? "border-[#E2781E]/25 bg-[#E2781E]/8 text-[#F3F4F6]"
+                      : "border-red-500/30 bg-red-950/40 text-red-300"
                   }`}
                 >
                   {siteMsg}
@@ -1004,12 +991,12 @@ export function AdminTiendaPanel({
 
               {tab === "resumen" && (
                 <section className="space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-2 rounded-2xl border border-[#2F3E46]/10 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-2 rounded-2xl border border-white/10 bg-[#1D1B19] p-4 shadow-sm sm:p-5">
                     <div>
-                      <h3 className="font-heading text-sm font-bold uppercase tracking-wide text-[#2F3E46]">
+                      <h3 className="font-heading text-sm font-bold uppercase tracking-wide text-[#F3F4F6]">
                         Resumen general
                       </h3>
-                      <p className="mt-1 text-xs leading-relaxed text-[#2F3E46]/65">
+                      <p className="mt-1 text-xs leading-relaxed text-[#F3F4F6]/65">
                         Números según el catálogo actual y los últimos pedidos cargados en
                         esta sesión (hasta 100). Usá «Actualizar» para refrescar.
                       </p>
@@ -1021,45 +1008,45 @@ export function AdminTiendaPanel({
                         void onCatalogoActualizado();
                       }}
                       disabled={cargandoPedidos}
-                      className="shrink-0 rounded-full border-2 border-[#53634B]/35 bg-[#53634B]/10 px-3 py-2 font-heading text-[10px] font-bold uppercase tracking-wider text-[#2F3E46] transition-colors hover:bg-[#53634B]/18 disabled:opacity-50"
+                      className="shrink-0 rounded-full border-2 border-[#E2781E]/35 bg-[#E2781E]/10 px-3 py-2 font-heading text-[10px] font-bold uppercase tracking-wider text-[#F3F4F6] transition-colors hover:bg-[#E2781E]/18 disabled:opacity-50"
                     >
                       {cargandoPedidos ? "Actualizando…" : "Actualizar"}
                     </button>
                   </div>
 
-                  <div className="rounded-2xl border border-[#53634B]/25 bg-[#53634B]/8 p-4 sm:p-5">
-                    <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[#53634B]">
+                  <div className="rounded-2xl border border-[#E2781E]/25 bg-[#E2781E]/8 p-4 sm:p-5">
+                    <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[#E2781E]">
                       Inventario (catálogo)
                     </p>
                     <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-                      <div className="rounded-xl border border-[#2F3E46]/10 bg-white/90 px-3 py-2">
-                        <dt className="text-[#2F3E46]/55">Productos publicados</dt>
-                        <dd className="font-heading text-lg font-bold tabular-nums text-[#2F3E46]">
+                      <div className="rounded-xl border border-white/10 bg-[#1D1B19] px-3 py-2">
+                        <dt className="text-[#F3F4F6]/55">Productos publicados</dt>
+                        <dd className="font-heading text-lg font-bold tabular-nums text-[#F3F4F6]">
                           {resumenStock.totalProductos}
                         </dd>
                       </div>
-                      <div className="rounded-xl border border-[#2F3E46]/10 bg-white/90 px-3 py-2">
-                        <dt className="text-[#2F3E46]/55">Unidades con tope (suma)</dt>
-                        <dd className="font-heading text-lg font-bold tabular-nums text-[#2F3E46]">
+                      <div className="rounded-xl border border-white/10 bg-[#1D1B19] px-3 py-2">
+                        <dt className="text-[#F3F4F6]/55">Unidades con tope (suma)</dt>
+                        <dd className="font-heading text-lg font-bold tabular-nums text-[#F3F4F6]">
                           {resumenStock.conLimite.unidades.toLocaleString("es-AR")}
                         </dd>
                       </div>
-                      <div className="rounded-xl border border-[#2F3E46]/10 bg-white/90 px-3 py-2">
-                        <dt className="text-[#2F3E46]/55">Con stock controlado</dt>
-                        <dd className="font-semibold text-[#2F3E46]">
+                      <div className="rounded-xl border border-white/10 bg-[#1D1B19] px-3 py-2">
+                        <dt className="text-[#F3F4F6]/55">Con stock controlado</dt>
+                        <dd className="font-semibold text-[#F3F4F6]">
                           {resumenStock.conLimite.productos} producto(s)
                         </dd>
                       </div>
-                      <div className="rounded-xl border border-[#2F3E46]/10 bg-white/90 px-3 py-2">
-                        <dt className="text-[#2F3E46]/55">Sin tope en la web</dt>
-                        <dd className="font-semibold text-[#2F3E46]">
+                      <div className="rounded-xl border border-white/10 bg-[#1D1B19] px-3 py-2">
+                        <dt className="text-[#F3F4F6]/55">Sin tope en la web</dt>
+                        <dd className="font-semibold text-[#F3F4F6]">
                           {resumenStock.sinLimite} producto(s)
                         </dd>
                       </div>
-                      <div className="rounded-xl border border-[#A65D37]/30 bg-[#fdf6f0] px-3 py-2 sm:col-span-2">
-                        <dt className="text-[#5c3319]/90">Alertas</dt>
-                        <dd className="mt-1 text-[#2F3E46]">
-                          <span className="font-semibold text-red-800">
+                      <div className="rounded-xl border border-[#E2781E]/30 bg-[#1F1B16] px-3 py-2 sm:col-span-2">
+                        <dt className="text-[#E8A882]">Alertas</dt>
+                        <dd className="mt-1 text-[#F3F4F6]">
+                          <span className="font-semibold text-red-300">
                             Sin unidades: {resumenStock.agotados}
                           </span>
                           {" · "}
@@ -1071,17 +1058,17 @@ export function AdminTiendaPanel({
                     </dl>
                     {resumenStock.criticos.length > 0 && (
                       <div className="mt-3">
-                        <p className="text-[10px] font-bold uppercase tracking-wide text-[#53634B]">
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-[#E2781E]">
                           Prioridad (menos unidades)
                         </p>
                         <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-[11px]">
                           {resumenStock.criticos.map((c) => (
                             <li
                               key={c.name}
-                              className="flex justify-between gap-2 rounded-lg bg-white/80 px-2 py-1"
+                              className="flex justify-between gap-2 rounded-lg bg-[#1D1B19] px-2 py-1"
                             >
-                              <span className="min-w-0 truncate text-[#2F3E46]">{c.name}</span>
-                              <span className="shrink-0 font-mono font-semibold tabular-nums text-[#A65D37]">
+                              <span className="min-w-0 truncate text-[#F3F4F6]">{c.name}</span>
+                              <span className="shrink-0 font-mono font-semibold tabular-nums text-[#E2781E]">
                                 {c.stock}
                               </span>
                             </li>
@@ -1091,14 +1078,14 @@ export function AdminTiendaPanel({
                     )}
                   </div>
 
-                  <div className="rounded-2xl border border-[#A65D37]/25 bg-gradient-to-br from-[#fefdfb] to-[#F2EBD3]/35 p-4 shadow-sm sm:p-5">
-                    <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[#A65D37]">
+                  <div className="rounded-2xl border border-[#E2781E]/25 bg-gradient-to-br from-[#151311] to-[#1D1B19]/35 p-4 shadow-sm sm:p-5">
+                    <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[#E2781E]">
                       Pedidos web
                     </p>
-                    <p className="mt-1 text-[11px] text-[#2F3E46]/65">
+                    <p className="mt-1 text-[11px] text-[#F3F4F6]/65">
                       Lista actual: {resumenPedidos.totalEnLista} pedido(s). Suma de totales
                       en pedidos no cancelados:{" "}
-                      <strong className="text-[#2F3E46]">
+                      <strong className="text-[#F3F4F6]">
                         ${resumenPedidos.montoPedidosActivos.toLocaleString("es-AR")}
                       </strong>{" "}
                       ({resumenPedidos.cantidadActivos} pedido(s)).
@@ -1115,22 +1102,22 @@ export function AdminTiendaPanel({
                       ).map(([k, label]) => (
                         <div
                           key={k}
-                          className="flex items-center justify-between rounded-lg border border-[#2F3E46]/10 bg-white/90 px-3 py-2"
+                          className="flex items-center justify-between rounded-lg border border-white/10 bg-[#1D1B19] px-3 py-2"
                         >
-                          <dt className="text-[#2F3E46]/75">{label}</dt>
-                          <dd className="font-heading font-bold tabular-nums text-[#2F3E46]">
+                          <dt className="text-[#F3F4F6]/75">{label}</dt>
+                          <dd className="font-heading font-bold tabular-nums text-[#F3F4F6]">
                             {resumenPedidos.porEstado[k]}
                           </dd>
                         </div>
                       ))}
                     </dl>
-                    <div className="mt-3 space-y-2 rounded-xl border border-[#2F3E46]/10 bg-white/90 px-3 py-2 text-[11px] leading-snug text-[#2F3E46]">
+                    <div className="mt-3 space-y-2 rounded-xl border border-white/10 bg-[#1D1B19] px-3 py-2 text-[11px] leading-snug text-[#F3F4F6]">
                       <p>
-                        <strong className="text-[#8b4510]">Modificación sin confirmar</strong>{" "}
+                        <strong className="text-[#E8A882]">Modificación sin confirmar</strong>{" "}
                         (cliente): {resumenPedidos.modificacionPendienteCliente}
                       </p>
                       <p>
-                        <strong className="text-[#53634B]">Cliente confirmó</strong> (pendiente
+                        <strong className="text-[#E2781E]">Cliente confirmó</strong> (pendiente
                         de marcar visto): {resumenPedidos.clienteConfirmoSinVista}
                       </p>
                     </div>
@@ -1140,12 +1127,12 @@ export function AdminTiendaPanel({
                         return (
                           <div
                             key={dias}
-                            className="rounded-xl border border-[#2F3E46]/10 bg-white/90 px-3 py-2 text-[11px]"
+                            className="rounded-xl border border-white/10 bg-[#1D1B19] px-3 py-2 text-[11px]"
                           >
-                            <p className="font-heading text-[10px] font-bold uppercase tracking-wide text-[#53634B]">
+                            <p className="font-heading text-[10px] font-bold uppercase tracking-wide text-[#E2781E]">
                               Últimos {dias} días
                             </p>
-                            <p className="mt-1 text-[#2F3E46]">
+                            <p className="mt-1 text-[#F3F4F6]">
                               {w.cantidad} pedido(s) creados ·{" "}
                               <span className="font-semibold">
                                 ${w.monto.toLocaleString("es-AR")}
@@ -1161,12 +1148,12 @@ export function AdminTiendaPanel({
               )}
 
               {tab === "portada" && (
-                <section className="space-y-4 rounded-2xl border border-[#2F3E46]/10 bg-white p-4 shadow-sm sm:p-5">
+                <section className="space-y-4 rounded-2xl border border-white/10 bg-[#1D1B19] p-4 shadow-sm sm:p-5">
                   <div>
-                    <h3 className="font-heading text-sm font-bold uppercase tracking-wide text-[#2F3E46]">
+                    <h3 className="font-heading text-sm font-bold uppercase tracking-wide text-[#F3F4F6]">
                       Texto en movimiento
                     </h3>
-                    <p className="mt-1 text-xs text-[#2F3E46]/65">
+                    <p className="mt-1 text-xs text-[#F3F4F6]/65">
                       Lo que ves en la franja oscura bajo el menú principal.
                     </p>
                   </div>
@@ -1181,7 +1168,7 @@ export function AdminTiendaPanel({
                     type="button"
                     disabled={savingSite}
                     onClick={guardarPortada}
-                    className="w-full rounded-xl bg-[#A65D37] py-3.5 font-heading text-xs font-bold uppercase tracking-wider text-white shadow-md transition-opacity hover:opacity-95 disabled:opacity-50"
+                    className="w-full rounded-xl bg-[#E2781E] py-3.5 font-heading text-xs font-bold uppercase tracking-wider text-white shadow-md transition-opacity hover:opacity-95 disabled:opacity-50"
                   >
                     {savingSite ? "Guardando…" : "Guardar texto"}
                   </button>
@@ -1189,12 +1176,12 @@ export function AdminTiendaPanel({
               )}
 
               {tab === "categorias" && (
-                <section className="space-y-4 rounded-2xl border border-[#2F3E46]/10 bg-white p-4 shadow-sm sm:p-5">
+                <section className="space-y-4 rounded-2xl border border-white/10 bg-[#1D1B19] p-4 shadow-sm sm:p-5">
                   <div>
-                    <h3 className="font-heading text-sm font-bold uppercase tracking-wide text-[#2F3E46]">
+                    <h3 className="font-heading text-sm font-bold uppercase tracking-wide text-[#F3F4F6]">
                       Menú Equipamiento
                     </h3>
-                    <p className="mt-1 text-xs text-[#2F3E46]/65">
+                    <p className="mt-1 text-xs text-[#F3F4F6]/65">
                       «Todos» se muestra solo en la tienda; acá definís el resto.
                     </p>
                   </div>
@@ -1202,9 +1189,9 @@ export function AdminTiendaPanel({
                     {catsDraft.map((c, i) => (
                       <li
                         key={`${c}-${i}`}
-                        className="flex items-center gap-2 rounded-xl border border-[#2F3E46]/10 bg-[#fefdfb] p-1 shadow-sm"
+                        className="flex items-center gap-2 rounded-xl border border-white/10 bg-[#151311] p-1 shadow-sm"
                       >
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#F2EBD3] text-[11px] font-bold text-[#53634B]">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#1D1B19] text-[11px] font-bold text-[#E2781E]">
                           {i + 1}
                         </span>
                         <input
@@ -1219,7 +1206,7 @@ export function AdminTiendaPanel({
                         />
                         <button
                           type="button"
-                          className="shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-red-700 transition-colors hover:bg-red-50"
+                          className="shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-red-300 transition-colors hover:bg-red-950/40"
                           onClick={() =>
                             setCatsDraft((prev) => prev.filter((_, j) => j !== i))
                           }
@@ -1248,7 +1235,7 @@ export function AdminTiendaPanel({
                     />
                     <button
                       type="button"
-                      className="shrink-0 rounded-xl bg-[#2F3E46] px-5 py-2.5 font-heading text-xs font-bold uppercase tracking-wide text-white shadow-sm hover:bg-[#243028]"
+                      className="shrink-0 rounded-xl bg-[#2C2926] px-5 py-2.5 font-heading text-xs font-bold uppercase tracking-wide text-white shadow-sm hover:bg-[#3A342E]"
                       onClick={() => {
                         const t = nuevaCat.trim();
                         if (t && !catsDraft.includes(t))
@@ -1263,7 +1250,7 @@ export function AdminTiendaPanel({
                     type="button"
                     disabled={savingSite}
                     onClick={guardarCategorias}
-                    className="w-full rounded-xl border-2 border-[#53634B] bg-[#53634B] py-3.5 font-heading text-xs font-bold uppercase tracking-wider text-white transition-opacity hover:bg-[#3d4a38] disabled:opacity-50"
+                    className="w-full rounded-xl border-2 border-[#E2781E] bg-[#E2781E] py-3.5 font-heading text-xs font-bold uppercase tracking-wider text-black transition-opacity hover:bg-[#C96614] disabled:opacity-50"
                   >
                     {savingSite ? "Guardando…" : "Guardar categorías"}
                   </button>
@@ -1275,35 +1262,35 @@ export function AdminTiendaPanel({
                   <button
                     type="button"
                     onClick={abrirNuevo}
-                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#A65D37] py-4 font-heading text-sm font-bold uppercase tracking-wide text-white shadow-md transition-transform hover:scale-[1.01] active:scale-[0.99]"
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#E2781E] py-4 font-heading text-sm font-bold uppercase tracking-wide text-white shadow-md transition-transform hover:scale-[1.01] active:scale-[0.99]"
                   >
                     <span className="text-lg leading-none">+</span>
                     Nuevo producto
                   </button>
-                  <ul className="max-h-[min(52vh,24rem)] space-y-2 overflow-y-auto rounded-2xl border border-[#2F3E46]/10 bg-white p-2 shadow-inner">
+                  <ul className="max-h-[min(52vh,24rem)] space-y-2 overflow-y-auto rounded-2xl border border-white/10 bg-[#1D1B19] p-2 shadow-inner">
                     {productos.length === 0 ? (
-                      <li className="py-10 text-center text-sm text-[#2F3E46]/45">
+                      <li className="py-10 text-center text-sm text-[#F3F4F6]/45">
                         Todavía no hay productos en el catálogo.
                       </li>
                     ) : (
                       productos.map((p) => (
                         <li
                           key={p.id}
-                          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-transparent px-3 py-3 transition-colors hover:border-[#2F3E46]/10 hover:bg-[#F2EBD3]/30"
+                          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-transparent px-3 py-3 transition-colors hover:border-white/10 hover:bg-[#1D1B19]/30"
                         >
                           <div className="min-w-0 flex-1">
-                            <p className="truncate font-heading text-sm font-bold text-[#2F3E46]">
+                            <p className="truncate font-heading text-sm font-bold text-[#F3F4F6]">
                               {p.name}
                             </p>
-                            <p className="mt-0.5 text-xs text-[#53634B]">
-                              <span className="font-semibold text-[#A65D37]">
+                            <p className="mt-0.5 text-xs text-[#E2781E]">
+                              <span className="font-semibold text-[#E2781E]">
                                 ${(p.price ?? 0).toLocaleString("es-AR")}
                               </span>
-                              <span className="text-[#2F3E46]/40"> · </span>
+                              <span className="text-[#F3F4F6]/40"> · </span>
                               {p.category ?? "—"}
                               {typeof p.stock === "number" && (
                                 <>
-                                  <span className="text-[#2F3E46]/40"> · </span>
+                                  <span className="text-[#F3F4F6]/40"> · </span>
                                   Stock {p.stock}
                                 </>
                               )}
@@ -1312,7 +1299,7 @@ export function AdminTiendaPanel({
                           <div className="flex shrink-0 gap-2">
                             <button
                               type="button"
-                              className="rounded-lg border border-[#53634B]/30 bg-[#53634B]/10 px-3 py-2 font-heading text-[11px] font-bold uppercase tracking-wide text-[#2F3E46] transition-colors hover:bg-[#53634B]/20"
+                              className="rounded-lg border border-[#E2781E]/30 bg-[#E2781E]/10 px-3 py-2 font-heading text-[11px] font-bold uppercase tracking-wide text-[#F3F4F6] transition-colors hover:bg-[#E2781E]/20"
                               onClick={() => abrirEditar(p)}
                             >
                               Editar
@@ -1320,7 +1307,7 @@ export function AdminTiendaPanel({
                             <button
                               type="button"
                               disabled={borrandoId === p.id}
-                              className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 font-heading text-[11px] font-bold uppercase tracking-wide text-red-800 transition-colors hover:bg-red-100 disabled:opacity-50"
+                              className="rounded-lg border border-red-500/30 bg-red-950/40 px-3 py-2 font-heading text-[11px] font-bold uppercase tracking-wide text-red-300 transition-colors hover:bg-red-950/50 disabled:opacity-50"
                               onClick={() => eliminarProducto(p)}
                             >
                               {borrandoId === p.id ? "…" : "Borrar"}
@@ -1336,11 +1323,11 @@ export function AdminTiendaPanel({
               {tab === "catalogo" && catalogoVista === "form" && (
                 <form
                   onSubmit={handleSubmitProducto}
-                  className="space-y-4 rounded-2xl border border-[#2F3E46]/10 bg-white p-4 shadow-sm sm:p-5"
+                  className="space-y-4 rounded-2xl border border-white/10 bg-[#1D1B19] p-4 shadow-sm sm:p-5"
                 >
                   <button
                     type="button"
-                    className="group flex items-center gap-2 font-heading text-xs font-bold uppercase tracking-wide text-[#53634B] transition-colors hover:text-[#2F3E46]"
+                    className="group flex items-center gap-2 font-heading text-xs font-bold uppercase tracking-wide text-[#E2781E] transition-colors hover:text-[#F3F4F6]"
                     onClick={() => {
                       resetFormProducto();
                       setCatalogoVista("lista");
@@ -1351,11 +1338,11 @@ export function AdminTiendaPanel({
                     </span>
                     Volver al listado
                   </button>
-                  <h3 className="border-b border-[#2F3E46]/10 pb-2 font-heading text-base font-bold uppercase tracking-wide text-[#2F3E46]">
+                  <h3 className="border-b border-white/10 pb-2 font-heading text-base font-bold uppercase tracking-wide text-[#F3F4F6]">
                     {editando ? "Editar producto" : "Alta de producto"}
                   </h3>
                   <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">
                       Nombre
                     </span>
                     <input
@@ -1367,9 +1354,9 @@ export function AdminTiendaPanel({
                     />
                   </label>
                   <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">
                       Descripción{" "}
-                      <span className="font-normal normal-case text-[#2F3E46]/45">
+                      <span className="font-normal normal-case text-[#F3F4F6]/45">
                         (opcional)
                       </span>
                     </span>
@@ -1381,7 +1368,7 @@ export function AdminTiendaPanel({
                     />
                   </label>
                   <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">
                       Precio (ARS)
                     </span>
                     <input
@@ -1394,9 +1381,9 @@ export function AdminTiendaPanel({
                     />
                   </label>
                   <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">
                       Stock (unidades){" "}
-                      <span className="font-normal normal-case text-[#2F3E46]/45">
+                      <span className="font-normal normal-case text-[#F3F4F6]/45">
                         (opcional)
                       </span>
                     </span>
@@ -1410,12 +1397,12 @@ export function AdminTiendaPanel({
                       placeholder="Vacío = sin tope en la web"
                       className={inputClass}
                     />
-                    <p className="mt-1 text-[11px] leading-relaxed text-[#2F3E46]/55">
+                    <p className="mt-1 text-[11px] leading-relaxed text-[#F3F4F6]/55">
                       0 = sin venta online. Vacío = no mostramos límite (productos viejos o reposición abierta).
                     </p>
                   </label>
                   <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#53634B]">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#E2781E]">
                       Categoría
                     </span>
                     <select
@@ -1436,12 +1423,12 @@ export function AdminTiendaPanel({
                     </select>
                   </label>
 
-                  <fieldset className="space-y-3 rounded-2xl border border-[#2F3E46]/10 bg-[#F2EBD3]/25 p-4">
-                    <legend className="px-1 font-heading text-[11px] font-bold uppercase tracking-wider text-[#2F3E46]">
+                  <fieldset className="space-y-3 rounded-2xl border border-white/10 bg-[#1D1B19]/25 p-4">
+                    <legend className="px-1 font-heading text-[11px] font-bold uppercase tracking-wider text-[#F3F4F6]">
                       Imagen del producto
                     </legend>
                     <div className="flex flex-col gap-3">
-                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[#2F3E46]/10 bg-white p-3 shadow-sm transition-shadow has-[:checked]:ring-2 has-[:checked]:ring-[#53634B]/30">
+                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-[#1D1B19] p-3 shadow-sm transition-shadow has-[:checked]:ring-2 has-[:checked]:ring-[#E2781E]/30">
                         <input
                           type="radio"
                           name="modo-imagen"
@@ -1450,27 +1437,27 @@ export function AdminTiendaPanel({
                             setModoImagen("url");
                             setArchivo(null);
                           }}
-                          className="mt-1 h-4 w-4 accent-[#53634B]"
+                          className="mt-1 h-4 w-4 accent-[#E2781E]"
                         />
-                        <span className="text-xs leading-snug text-[#2F3E46]">
+                        <span className="text-xs leading-snug text-[#F3F4F6]">
                           <span className="font-semibold">URL pública</span>
-                          <span className="mt-0.5 block text-[11px] text-[#2F3E46]/60">
+                          <span className="mt-0.5 block text-[11px] text-[#F3F4F6]/60">
                             Pegá el enlace directo a la imagen (.jpg, .png…)
                           </span>
                         </span>
                       </label>
                       {STORAGE_UPLOAD_HABILITADO && (
-                        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[#2F3E46]/10 bg-white p-3 shadow-sm transition-shadow has-[:checked]:ring-2 has-[:checked]:ring-[#53634B]/30">
+                        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-[#1D1B19] p-3 shadow-sm transition-shadow has-[:checked]:ring-2 has-[:checked]:ring-[#E2781E]/30">
                           <input
                             type="radio"
                             name="modo-imagen"
                             checked={modoImagen === "archivo"}
                             onChange={() => setModoImagen("archivo")}
-                            className="mt-1 h-4 w-4 accent-[#53634B]"
+                            className="mt-1 h-4 w-4 accent-[#E2781E]"
                           />
-                          <span className="text-xs leading-snug text-[#2F3E46]">
+                          <span className="text-xs leading-snug text-[#F3F4F6]">
                             <span className="font-semibold">Archivo (Storage)</span>
-                            <span className="mt-0.5 block text-[11px] text-[#2F3E46]/60">
+                            <span className="mt-0.5 block text-[11px] text-[#F3F4F6]/60">
                               Subida directa con Firebase Storage
                             </span>
                           </span>
@@ -1497,7 +1484,7 @@ export function AdminTiendaPanel({
                           onChange={(e) =>
                             setArchivo(e.target.files?.[0] ?? null)
                           }
-                          className="w-full text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[#53634B] file:px-4 file:py-2 file:font-heading file:text-xs file:font-bold file:uppercase file:tracking-wide file:text-white"
+                          className="w-full text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[#E2781E] file:px-4 file:py-2 file:font-heading file:text-xs file:font-bold file:uppercase file:tracking-wide file:text-white"
                         />
                       )
                     )}
@@ -1505,19 +1492,19 @@ export function AdminTiendaPanel({
                       editando &&
                       modoImagen === "archivo" &&
                       !archivo && (
-                        <p className="text-[11px] text-[#2F3E46]/55">
+                        <p className="text-[11px] text-[#F3F4F6]/55">
                           Sin archivo nuevo se conserva la imagen actual.
                         </p>
                       )}
                   </fieldset>
 
                   {formError && (
-                    <p className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-800">
+                    <p className="rounded-xl bg-red-950/40 px-3 py-2 text-xs text-red-300">
                       {formError}
                     </p>
                   )}
                   {formOk && (
-                    <p className="rounded-xl bg-[#53634B]/10 px-3 py-2 text-xs font-medium text-[#2F3E46]">
+                    <p className="rounded-xl bg-[#E2781E]/10 px-3 py-2 text-xs font-medium text-[#F3F4F6]">
                       {formOk}
                     </p>
                   )}
@@ -1525,7 +1512,7 @@ export function AdminTiendaPanel({
                   <button
                     type="submit"
                     disabled={guardando}
-                    className="w-full rounded-xl bg-[#A65D37] py-3.5 font-heading text-sm font-bold uppercase tracking-wide text-white shadow-md transition-opacity hover:opacity-95 disabled:opacity-50"
+                    className="w-full rounded-xl bg-[#E2781E] py-3.5 font-heading text-sm font-bold uppercase tracking-wide text-white shadow-md transition-opacity hover:opacity-95 disabled:opacity-50"
                   >
                     {guardando
                       ? "Guardando…"
@@ -1537,56 +1524,323 @@ export function AdminTiendaPanel({
               )}
 
               {tab === "pedidos" && (
-                <section className="space-y-4 rounded-2xl border border-[#2F3E46]/12 bg-gradient-to-br from-[#fefdfb] via-white to-[#F2EBD3]/25 p-4 shadow-[0_12px_40px_-20px_rgba(47,62,70,0.18)] sm:p-5">
-                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#2F3E46]/8 pb-4">
+                <section className="space-y-5">
+                  <div className="flex flex-col gap-4 rounded-xl border border-white/[0.08] bg-[#1D1B19] p-6 md:flex-row md:items-start md:justify-between">
                     <div className="min-w-0">
-                      <p className="font-heading text-[10px] font-semibold uppercase tracking-[0.2em] text-[#A65D37]">
-                        Tienda
+                      <p className="font-heading text-xs font-bold uppercase tracking-widest text-[#E2781E]">
+                        • Ventas & envíos
                       </p>
-                      <h3 className="mt-0.5 font-heading text-base font-bold uppercase tracking-wide text-[#2F3E46]">
-                        Pedidos web
+                      <h3 className="mt-1 font-heading text-2xl font-black uppercase tracking-wide text-white">
+                        Gestión de pedidos
                       </h3>
-                      <p className="mt-1 max-w-md text-xs leading-relaxed text-[#2F3E46]/65">
-                        Si cambiás ítems o cantidades, el cliente logueado debe confirmar en «Mi cuenta» antes de que puedas poner el pedido en preparación. Sin cuenta, el pedido no queda guardado en el sistema: coordiná el cambio por WhatsApp.
-                      </p>
-                      <p className="mt-1 max-w-md text-xs leading-relaxed text-[#2F3E46]/55">
-                        Cuando el cliente confirma el pedido con cuenta, el stock ya se reserva en el catálogo (otros no pueden comprar esas unidades). Al cancelar o si el cliente rechaza un pedido modificado, el stock vuelve. Pasar a en preparación solo cambia el estado, sin volver a descontar.
+                      <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[#9CA3AF]">
+                        Si cambiás artículos o cantidades, el cliente registrado debe confirmar desde «Mi cuenta» antes de que puedas poner el pedido en preparación. Al cancelar o rechazar un pedido, el stock se reincorpora al catálogo de forma automática.
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => void cargarPedidosAdmin()}
                       disabled={cargandoPedidos}
-                      className="shrink-0 rounded-full border-2 border-[#53634B]/35 bg-[#53634B]/10 px-4 py-2 font-heading text-[10px] font-bold uppercase tracking-wider text-[#2F3E46] transition-colors hover:bg-[#53634B]/18 disabled:opacity-50"
+                      className="shrink-0 rounded-lg border border-white/10 bg-[#2C2926] px-4 py-2 font-heading text-xs font-bold uppercase tracking-wider text-white hover:bg-[#3A342E] disabled:opacity-50"
                     >
-                      {cargandoPedidos ? "Cargando…" : "Actualizar lista"}
+                      {cargandoPedidos ? "Cargando…" : "↻ Actualizar lista"}
                     </button>
                   </div>
-                  <div className="rounded-2xl border border-[#53634B]/25 bg-[#53634B]/8 px-4 py-3 text-xs leading-relaxed text-[#2F3E46]">
-                    <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[#53634B]">
-                      Rutina sugerida
+                  <div className="rounded-xl border border-white/[0.08] bg-[#1D1B19] p-6">
+                    <p className="font-heading text-xs font-bold uppercase tracking-wider text-[#9CA3AF]">
+                      ❓ Guía operativa para despachos
                     </p>
-                    <ol className="mt-2 list-decimal space-y-1.5 pl-4 marker:font-medium">
-                      <li>Revisá pedidos nuevos al menos una vez al día.</li>
-                      <li>Respondé por WhatsApp y actualizá el estado acá para que el cliente lo vea en «Mi cuenta».</li>
-                      <li>El stock con número en Productos se sincroniza con los pedidos al avanzar o cancelar estados; revisá ahí si algo no cierra.</li>
-                    </ol>
+                    <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
+                      <div className="rounded-lg border border-white/8 bg-[#2C2926] p-4">
+                        <p className="font-heading text-xs font-bold uppercase text-[#E2781E]">Paso 01</p>
+                        <p className="mt-2 font-heading text-xs font-bold uppercase text-white">Revisar pedidos entrantes</p>
+                        <p className="mt-1 text-xs text-[#9CA3AF]">Revisá la lista de pedidos nuevos al menos dos veces al día para mantener una respuesta ágil.</p>
+                      </div>
+                      <div className="rounded-lg border border-white/8 bg-[#2C2926] p-4">
+                        <p className="font-heading text-xs font-bold uppercase text-emerald-400">Paso 02</p>
+                        <p className="mt-2 font-heading text-xs font-bold uppercase text-white">Contactar por WhatsApp</p>
+                        <p className="mt-1 text-xs text-[#9CA3AF]">Coordiná detalles de entrega con el cliente y actualizá el estado del pedido en la plataforma.</p>
+                      </div>
+                      <div className="rounded-lg border border-white/8 bg-[#2C2926] p-4">
+                        <p className="font-heading text-xs font-bold uppercase text-amber-400">Paso 03</p>
+                        <p className="mt-2 font-heading text-xs font-bold uppercase text-white">Sincronización de stock</p>
+                        <p className="mt-1 text-xs text-[#9CA3AF]">El stock de los productos se actualiza automáticamente al aprobar, enviar o cancelar ventas.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="flex min-h-[11.5rem] flex-col rounded-xl border border-white/[0.08] bg-[#1D1B19] p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-heading text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+                          Ingresos del día
+                        </p>
+                        <IconCreditCard className="h-4 w-4 text-[#E8A882]" />
+                      </div>
+                      <p className="mt-3 font-heading text-3xl font-black tracking-tight text-white">
+                        ${formatARS(kpisDia.ingresosHoy)}
+                      </p>
+                      <p className="mt-2 text-[11px] leading-relaxed text-emerald-400">
+                        {kpisDia.deltaPctVsAyer === null ? (
+                          "Sin ventas ayer para comparar"
+                        ) : (
+                          <>
+                            ↗ {kpisDia.deltaPctVsAyer >= 0 ? "+" : ""}
+                            {kpisDia.deltaPctVsAyer.toFixed(0)}% vs. ayer
+                            {kpisDia.confirmadosHoy > 0
+                              ? ` · Ticket prom. $${formatARS(Math.round(kpisDia.ticketPromedioHoy))}`
+                              : ""}
+                          </>
+                        )}
+                      </p>
+                      <p className="mt-auto pt-3 text-xs text-emerald-400">
+                        ✓ {kpisDia.confirmadosHoy} pedido{kpisDia.confirmadosHoy === 1 ? "" : "s"} confirmado
+                        {kpisDia.confirmadosHoy === 1 ? "" : "s"} hoy
+                      </p>
+                    </div>
+
+                    <div className="flex min-h-[11.5rem] flex-col rounded-xl border border-white/[0.08] bg-[#1D1B19] p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-heading text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+                          Pedidos a despachar
+                        </p>
+                        <IconTruck className="h-4 w-4 text-[#E8A882]" />
+                      </div>
+                      <p className="mt-3 flex items-baseline gap-2">
+                        <span className="font-heading text-3xl font-black leading-none text-[#E2781E]">
+                          {kpisDia.aDespachar}
+                        </span>
+                        <span className="font-heading text-xs font-bold uppercase tracking-wider text-[#9CA3AF]">
+                          Órdenes
+                        </span>
+                      </p>
+                      <p className="mt-2 text-[11px] leading-relaxed text-[#E8A882]">
+                        <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-[#E2781E]" />
+                        {resumenPedidos.porEstado.recibido} nuevos · {resumenPedidos.porEstado.en_preparacion} en preparación
+                      </p>
+                      <p className="mt-auto pt-3 text-xs text-[#E8A882]">
+                        ⏱ Tiempo est. de armado: ~{kpisDia.minutosArmadoEst} min
+                      </p>
+                    </div>
+
+                    <div className="flex min-h-[11.5rem] flex-col rounded-xl border border-white/[0.08] bg-[#1D1B19] p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-heading text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+                          Visitas & conversión
+                        </p>
+                        <svg className="h-4 w-4 text-[#E8A882]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 14l4-4 3 3 7-8" />
+                          <path strokeLinecap="round" d="M14 5h6v6" />
+                        </svg>
+                      </div>
+                      <p className="mt-3 flex items-baseline gap-2">
+                        <span className="font-heading text-3xl font-black leading-none text-white">0</span>
+                        <span className="font-heading text-xs font-bold uppercase tracking-wider text-[#9CA3AF]">
+                          Visitas hoy
+                        </span>
+                      </p>
+                      <p className="mt-2 text-[11px] text-emerald-400">▣ 0% tasa de conversión</p>
+                      <p className="mt-auto flex items-center gap-1.5 pt-3 text-xs text-[#9CA3AF]">
+                        <IconCart className="h-3.5 w-3.5" />
+                        Sin medición de visitas ni carritos aún
+                      </p>
+                    </div>
+
+                    <div className="flex min-h-[11.5rem] flex-col rounded-xl border border-[#E2781E]/35 bg-[#1D1B19] p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-heading text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+                          Alertas de stock
+                        </p>
+                        <span className="text-[#E2781E]" aria-hidden>⚠</span>
+                      </div>
+                      <div className="mt-3 flex-1 space-y-2">
+                        {resumenStock.criticos.length === 0 ? (
+                          <p className="text-[11px] text-[#9CA3AF]">Sin alertas de inventario.</p>
+                        ) : (
+                          resumenStock.criticos.slice(0, 2).map((c) => (
+                            <div key={c.name} className="flex items-center justify-between gap-2">
+                              <p className="min-w-0 truncate font-heading text-[11px] font-bold uppercase tracking-wide text-white">
+                                {c.name}
+                              </p>
+                              <span
+                                className={`shrink-0 rounded-md px-1.5 py-0.5 font-heading text-[10px] font-bold tabular-nums ${
+                                  c.stock === 0
+                                    ? "bg-red-950/80 text-red-300"
+                                    : "bg-[#E2781E]/20 text-[#E8A882]"
+                                }`}
+                              >
+                                {c.stock} u.
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setTab("catalogo")}
+                        className="mt-3 flex items-center justify-between font-heading text-[10px] font-bold uppercase tracking-wide text-[#E8A882] hover:text-white"
+                      >
+                        Ver inventario
+                        <span aria-hidden>→</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 rounded-xl border border-white/[0.08] bg-[#1D1B19] p-4">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                      <label className="relative min-w-0 flex-1">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#6B7280]">
+                          <IconSearch className="h-4 w-4" />
+                        </span>
+                        <input
+                          ref={busquedaPedidosRef}
+                          type="search"
+                          value={busquedaPedidos}
+                          onChange={(e) => setBusquedaPedidos(e.target.value)}
+                          placeholder="Buscar por ID (#fJaAK…), cliente, teléfono, producto o tracking Andreani…"
+                          className="h-10 w-full rounded-lg border border-white/10 bg-[#151311] py-2 pl-10 pr-3 text-sm text-white outline-none placeholder:text-white/35 focus:border-white/20"
+                        />
+                      </label>
+                      <div className="flex shrink-0 gap-2">
+                        <button
+                          type="button"
+                          onClick={exportarPedidosCsv}
+                          className="inline-flex h-10 items-center gap-1.5 rounded-[4px] border border-white/15 bg-[#151311] px-3 font-heading text-[10px] font-bold uppercase tracking-wide text-[#D1D5DB] hover:text-white"
+                        >
+                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+                          </svg>
+                          Exportar CSV
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBusquedaPedidos("");
+                            setFiltroEstado("todos");
+                            setFiltroPeriodo("todos");
+                          }}
+                          className="inline-flex h-10 items-center gap-1.5 rounded-[4px] border border-white/15 bg-[#151311] px-3 font-heading text-[10px] font-bold uppercase tracking-wide text-[#D1D5DB] hover:text-white"
+                        >
+                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 0113.4-4.5M19.5 12A7.5 7.5 0 016.1 16.5M19.5 5v4.5H15M4.5 19v-4.5H9" />
+                          </svg>
+                          Limpiar
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      {(
+                        [
+                          { id: "todos" as const, label: "Todos", count: pedidos.length, badge: "neutral" },
+                          { id: "nuevos" as const, label: "Nuevos / Pendientes", count: resumenPedidos.porEstado.recibido, badge: "orange" },
+                          { id: "en_preparacion" as const, label: "En preparación", count: resumenPedidos.porEstado.en_preparacion, badge: "orange" },
+                          { id: "enviado" as const, label: "Enviados", count: resumenPedidos.porEstado.enviado, badge: "neutral" },
+                          { id: "entregado" as const, label: "Entregados", count: resumenPedidos.porEstado.entregado, badge: "green" },
+                        ]
+                      ).map((pill) => {
+                        const activo = filtroEstado === pill.id;
+                        const badgeClass = activo
+                          ? "bg-black/30 text-white"
+                          : pill.badge === "orange"
+                            ? "bg-[#E2781E] text-black"
+                            : pill.badge === "green"
+                              ? "bg-emerald-500 text-black"
+                              : "bg-white/10 text-white";
+                        return (
+                          <button
+                            key={pill.id}
+                            type="button"
+                            onClick={() => setFiltroEstado(pill.id)}
+                            className={`inline-flex h-10 items-center gap-2.5 rounded-[4px] px-4 font-heading text-[11px] font-bold uppercase tracking-wide ${
+                              activo
+                                ? "bg-[#E2781E] text-white"
+                                : "border border-white/15 bg-[#151311] text-[#9CA3AF] hover:text-white"
+                            }`}
+                          >
+                            {pill.label}
+                            <span className={`flex h-5 min-w-5 items-center justify-center rounded-[3px] px-1.5 text-[10px] tabular-nums ${badgeClass}`}>
+                              {pill.count}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                      <label className="flex min-w-0 items-center gap-2">
+                        <IconTruck className="h-4 w-4 shrink-0 text-[#9CA3AF]" />
+                        <span className="shrink-0 font-heading text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+                          Entrega:
+                        </span>
+                        <span className="relative flex h-9 min-w-0 flex-1 items-center overflow-hidden rounded-[4px] border border-white/20 bg-[#151311]">
+                          <select className="h-full w-full appearance-none bg-transparent px-3 pr-8 text-xs font-medium text-white outline-none">
+                            <option>Todos los métodos</option>
+                          </select>
+                          <svg className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9CA3AF]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                          </svg>
+                        </span>
+                      </label>
+                      <label className="flex min-w-0 items-center gap-2">
+                        <svg className="h-4 w-4 shrink-0 text-[#9CA3AF]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                          <rect x="3.5" y="5" width="17" height="15" rx="2" />
+                          <path strokeLinecap="round" d="M8 3.5V7M16 3.5V7M3.5 10h17" />
+                        </svg>
+                        <span className="shrink-0 font-heading text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+                          Período:
+                        </span>
+                        <span className="relative flex h-9 min-w-0 flex-1 items-center overflow-hidden rounded-[4px] border border-white/20 bg-[#151311]">
+                          <select
+                            value={filtroPeriodo}
+                            onChange={(e) => setFiltroPeriodo(e.target.value as FiltroPeriodoPedidos)}
+                            className="h-full w-full appearance-none bg-transparent px-3 pr-8 text-xs font-medium text-white outline-none"
+                          >
+                            <option value="todos">Todos</option>
+                            <option value="hoy">
+                              {`Hoy (${new Date().toLocaleDateString("es-AR", {
+                                day: "numeric",
+                                month: "long",
+                                year: "numeric",
+                              })})`}
+                            </option>
+                            <option value="7d">Últimos 7 días</option>
+                            <option value="mes">Este mes</option>
+                          </select>
+                          <svg className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9CA3AF]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                          </svg>
+                        </span>
+                      </label>
+                      <label className="flex min-w-0 items-center gap-2">
+                        <IconCreditCard className="h-4 w-4 shrink-0 text-[#9CA3AF]" />
+                        <span className="shrink-0 font-heading text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+                          Pago:
+                        </span>
+                        <span className="relative flex h-9 min-w-0 flex-1 items-center overflow-hidden rounded-[4px] border border-white/20 bg-[#151311]">
+                          <select className="h-full w-full appearance-none bg-transparent px-3 pr-8 text-xs font-medium text-white outline-none">
+                            <option>Todos los medios de pago</option>
+                          </select>
+                          <svg className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9CA3AF]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                          </svg>
+                        </span>
+                      </label>
+                    </div>
                   </div>
                   {pedidoMsg && (
                     <div
                       className={`rounded-2xl border px-4 py-3 text-sm leading-snug ${
                         pedidoMsg.toLowerCase().includes("actualiz")
-                          ? "border-[#53634B]/25 bg-[#53634B]/10 text-[#2F3E46]"
-                          : "border-[#A65D37]/25 bg-[#fdf6f0] text-[#5c3319]"
+                          ? "border-[#E2781E]/25 bg-[#E2781E]/10 text-[#F3F4F6]"
+                          : "border-[#E2781E]/25 bg-[#1F1B16] text-[#E8A882]"
                       }`}
                       role="alert"
                     >
                       <p className="font-medium">{pedidoMsg}</p>
                       {!pedidoMsg.toLowerCase().includes("actualiz") &&
                         pedidoMsg.toLowerCase().includes("permiso") && (
-                          <p className="mt-2 text-xs text-[#2F3E46]/75">
-                            En el archivo <code className="rounded bg-white/80 px-1 py-0.5 text-[11px]">firestore.rules</code>, la función{" "}
-                            <code className="rounded bg-white/80 px-1 py-0.5 text-[11px]">isCatalogAdmin</code> tiene que usar el mismo email
+                          <p className="mt-2 text-xs text-[#F3F4F6]/75">
+                            En el archivo <code className="rounded bg-[#1D1B19] px-1 py-0.5 text-[11px]">firestore.rules</code>, la función{" "}
+                            <code className="rounded bg-[#1D1B19] px-1 py-0.5 text-[11px]">isCatalogAdmin</code> tiene que usar el mismo email
                             con el que iniciaste sesión. Luego publicá las reglas en Firebase → Firestore → Reglas.
                           </p>
                         )}
@@ -1595,73 +1849,119 @@ export function AdminTiendaPanel({
                   {cargandoPedidos && pedidos.length === 0 ? (
                     <div className="flex flex-col items-center gap-3 py-12">
                       <div
-                        className="h-9 w-9 animate-spin rounded-full border-2 border-[#53634B]/25 border-t-[#53634B]"
+                        className="h-9 w-9 animate-spin rounded-full border-2 border-[#E2781E]/25 border-t-[#E2781E]"
                         aria-hidden
                       />
-                      <p className="text-sm text-[#2F3E46]/55">Cargando pedidos…</p>
+                      <p className="text-sm text-[#F3F4F6]/55">Cargando pedidos…</p>
                     </div>
                   ) : pedidos.length === 0 &&
                     !(pedidoMsg && !pedidoMsg.toLowerCase().includes("actualiz")) ? (
-                    <div className="rounded-2xl border border-dashed border-[#2F3E46]/15 bg-white/60 py-12 text-center">
-                      <p className="text-sm text-[#2F3E46]/55">
+                    <div className="rounded-2xl border border-dashed border-white/15 bg-[#1D1B19]/60 py-12 text-center">
+                      <p className="text-sm text-[#F3F4F6]/55">
                         Todavía no hay pedidos guardados desde la web.
                       </p>
-                      <p className="mt-1 text-xs text-[#2F3E46]/40">
+                      <p className="mt-1 text-xs text-[#F3F4F6]/40">
                         Aparecen cuando un cliente envía el carrito con sesión iniciada.
                       </p>
                     </div>
-                  ) : pedidos.length > 0 ? (
-                    <ul className="max-h-[min(52vh,26rem)] space-y-3 overflow-y-auto pr-1">
-                      {pedidos.map((p) => (
+                  ) : pedidosFiltrados.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-white/15 bg-[#1D1B19]/60 py-12 text-center">
+                      <p className="text-sm text-[#F3F4F6]/55">Ningún pedido coincide con la búsqueda o los filtros.</p>
+                    </div>
+                  ) : (
+                    <ul className="space-y-6">
+                      {pedidosFiltrados.map((p) => (
                         <li
                           key={p.id}
-                          className="rounded-xl border border-[#2F3E46]/10 bg-white/90 p-3.5 shadow-sm"
+                          className="space-y-5 rounded-xl border border-white/[0.08] bg-[#1D1B19] p-6"
                         >
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="truncate font-mono text-[10px] text-[#2F3E46]/55">
-                                {p.id}
-                              </p>
-                              <p className="text-xs font-medium text-[#2F3E46]">
-                                {p.userEmail || "—"}
-                              </p>
-                              <p className="text-[11px] text-[#2F3E46]/50">
-                                {p.createdAt
-                                  ? p.createdAt.toLocaleString("es-AR", {
-                                      dateStyle: "short",
-                                      timeStyle: "short",
-                                    })
-                                  : "—"}
-                              </p>
+                          <div className="grid items-start gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
+                            <div className="flex min-w-0 items-start gap-3">
+                              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-[#E2781E]/15 text-[#E8A882]">
+                                <IconTruck className="h-6 w-6" />
+                              </span>
+                              <div className="min-w-0">
+                                <p className="flex flex-wrap items-center gap-2 font-heading text-[11px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+                                  Pedido: <span className="font-mono text-white">{p.id}</span>
+                                  {p.status === "recibido" && (
+                                    <span className="rounded-full bg-[#E2781E] px-2 py-0.5 text-[9px] font-bold text-black">
+                                      Nuevo
+                                    </span>
+                                  )}
+                                  {p.status === "en_preparacion" && (
+                                    <span className="rounded-full border border-[#E2781E]/40 bg-[#E2781E]/10 px-2 py-0.5 text-[9px] font-bold text-[#E8A882]">
+                                      Prioritario
+                                    </span>
+                                  )}
+                                </p>
+                                <p className="mt-1 font-heading text-lg font-black uppercase tracking-wide text-white">
+                                  {p.userEmail || "—"}
+                                </p>
+                                {p.createdAt && (
+                                  <p className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-[#9CA3AF]">
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                                        <rect x="3.5" y="5" width="17" height="15" rx="2" />
+                                        <path strokeLinecap="round" d="M8 3.5V7M16 3.5V7M3.5 10h17" />
+                                      </svg>
+                                      {`${String(p.createdAt.getDate()).padStart(2, "0")}/${String(p.createdAt.getMonth() + 1).padStart(2, "0")}/${p.createdAt.getFullYear()}`}
+                                    </span>
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                                        <circle cx="12" cy="12" r="8" />
+                                        <path strokeLinecap="round" d="M12 8v4l2.5 1.5" />
+                                      </svg>
+                                      {`${String(p.createdAt.getHours()).padStart(2, "0")}:${String(p.createdAt.getMinutes()).padStart(2, "0")} hs`}
+                                    </span>
+                                  </p>
+                                )}
+                              </div>
                             </div>
-                            <select
-                              value={p.status}
-                              onChange={(e) =>
-                                cambiarEstadoPedido(
-                                  p.id,
-                                  e.target.value as PedidoEstado
-                                )
-                              }
-                              disabled={actualizandoPedidoId === p.id}
-                              className="shrink-0 rounded-lg border border-[#2F3E46]/15 bg-white px-2 py-1.5 text-[11px] font-medium text-[#2F3E46] outline-none focus:ring-2 focus:ring-[#53634B]/25 disabled:opacity-50"
-                              aria-label={`Estado del pedido ${p.id}`}
-                            >
-                              {PEDIDO_ESTADOS.map((s) => (
-                                <option key={s} value={s}>
-                                  {etiquetaEstadoPedido(s)}
-                                </option>
-                              ))}
-                            </select>
+                            <label className="block w-full text-right">
+                              <span className="block font-heading text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+                                Estado del pedido
+                              </span>
+                              <span className="relative mt-1 flex h-12 w-full items-center overflow-hidden rounded-lg border border-white/10 bg-transparent">
+                                <select
+                                  value={p.status}
+                                  onChange={(e) =>
+                                    cambiarEstadoPedido(
+                                      p.id,
+                                      e.target.value as PedidoEstado
+                                    )
+                                  }
+                                  disabled={actualizandoPedidoId === p.id}
+                                  className="h-full w-full cursor-pointer appearance-none bg-transparent bg-none px-3 pr-9 text-center font-heading text-xs font-bold uppercase tracking-wide text-[#9CA3AF] outline-none disabled:opacity-50"
+                                  aria-label={`Estado del pedido ${p.id}`}
+                                >
+                                  {PEDIDO_ESTADOS.map((s) => (
+                                    <option key={s} value={s}>
+                                      {etiquetaEstadoPedido(s)}
+                                    </option>
+                                  ))}
+                                </select>
+                                <svg
+                                  className="pointer-events-none absolute right-2.5 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-[#D1D5DB]"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                  strokeWidth={2.2}
+                                  aria-hidden
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                                </svg>
+                              </span>
+                            </label>
                           </div>
                           {pedidoClienteConfirmoNoVistoPorAdmin(p) && (
-                            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#53634B]/35 bg-[#eef4ea] px-3 py-2.5">
+                            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#E2781E]/35 bg-[#1D1B19] px-3 py-2.5">
                               <span
-                                className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-[#A65D37] px-1.5 font-heading text-[11px] font-bold tabular-nums text-white"
+                                className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-[#E2781E] px-1.5 font-heading text-[11px] font-bold tabular-nums text-white"
                                 title="Nuevo"
                               >
                                 1
                               </span>
-                              <p className="min-w-0 flex-1 text-[11px] font-semibold leading-snug text-[#2F3E46]">
+                              <p className="min-w-0 flex-1 text-[11px] font-semibold leading-snug text-[#F3F4F6]">
                                 Pedido confirmado: el cliente aceptó la modificación en «Mi
                                 cuenta».
                               </p>
@@ -1671,7 +1971,7 @@ export function AdminTiendaPanel({
                                   void marcarConfirmacionClienteVista(p.id)
                                 }
                                 disabled={marcandoVistaConfirmacionId === p.id}
-                                className="shrink-0 rounded-lg border border-[#53634B]/40 bg-white px-3 py-1.5 font-heading text-[10px] font-bold uppercase tracking-wide text-[#53634B] transition-colors hover:bg-[#53634B]/10 disabled:opacity-50"
+                                className="shrink-0 rounded-lg border border-[#E2781E]/40 bg-[#1D1B19] px-3 py-1.5 font-heading text-[10px] font-bold uppercase tracking-wide text-[#E2781E] transition-colors hover:bg-[#E2781E]/10 disabled:opacity-50"
                               >
                                 {marcandoVistaConfirmacionId === p.id
                                   ? "…"
@@ -1680,202 +1980,183 @@ export function AdminTiendaPanel({
                             </div>
                           )}
                           {p.stockCommitted && (
-                            <p className="mt-1.5 text-[10px] font-medium text-[#53634B]">
+                            <p className="sr-only">
                               Unidades descontadas del stock del catálogo (pedido en curso).
                             </p>
                           )}
-                          {pedidoItemsEdit?.pedidoId === p.id ? (
-                            <div className="mt-3 space-y-2 rounded-xl border border-[#53634B]/25 bg-[#fefdfb] p-3">
-                              <p className="text-[10px] font-bold uppercase tracking-wide text-[#53634B]">
-                                Modificar pedido
+                          <div className="grid items-end gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
+                            <div className="min-w-0">
+                              <p className="font-heading text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+                                Productos del pedido
                               </p>
-                              <ul className="space-y-2">
-                                {pedidoItemsEdit.items.map((line, idx) => (
-                                  <li
-                                    key={`${line.productId}-${idx}`}
-                                    className="flex flex-wrap items-center gap-2 border-b border-[#2F3E46]/8 pb-2 last:border-0 last:pb-0"
-                                  >
-                                    <span className="min-w-0 flex-1 text-left text-xs text-[#2F3E46]">
-                                      {line.name}
-                                    </span>
-                                    <label className="flex items-center gap-1.5 text-[11px] text-[#2F3E46]/75">
-                                      <span className="whitespace-nowrap">Cant.</span>
-                                      <input
-                                        type="number"
-                                        min={1}
-                                        inputMode="numeric"
-                                        value={line.quantity}
-                                        onChange={(e) =>
-                                          actualizarCantidadItemPedido(idx, e.target.value)
-                                        }
-                                        className="w-16 rounded-lg border border-[#2F3E46]/15 bg-white px-2 py-1 text-center text-xs font-semibold text-[#2F3E46] outline-none focus:ring-2 focus:ring-[#53634B]/25"
-                                      />
-                                    </label>
-                                    <span className="text-xs font-semibold text-[#A65D37]">
-                                      ${line.lineTotal.toLocaleString("es-AR")}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => quitarItemPedido(idx)}
-                                      disabled={pedidoItemsEdit.items.length <= 1}
-                                      className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-bold uppercase text-red-800 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
-                                    >
-                                      Quitar
-                                    </button>
-                                  </li>
-                                ))}
-                              </ul>
-                              {productos.length > 0 ? (
-                                <label className="mt-1 block text-left">
-                                  <span className="text-[10px] font-bold uppercase tracking-wide text-[#53634B]">
-                                    Agregar del catálogo
-                                  </span>
-                                  <select
-                                    value={productoParaAgregarPedido}
-                                    onChange={(e) => {
-                                      const id = e.target.value;
-                                      setProductoParaAgregarPedido("");
-                                      if (!id) return;
-                                      const prod = productos.find((x) => x.id === id);
-                                      if (prod) agregarProductoAlPedidoEnEdicion(prod);
-                                    }}
-                                    className={`${inputClass} mt-1 text-xs`}
-                                  >
-                                    <option value="">Elegir producto…</option>
-                                    {productos.map((pr) => (
-                                      <option key={pr.id} value={pr.id}>
-                                        {pr.name} (${pr.price.toLocaleString("es-AR")})
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-                              ) : (
-                                <p className="text-[11px] text-[#2F3E46]/55">
-                                  No hay productos en el catálogo cargados; cargalos en la pestaña Productos para sumar líneas.
-                                </p>
-                              )}
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#2F3E46]/10 pt-2">
-                                <p className="font-bold text-[#A65D37]">
-                                  Total: $
-                                  {pedidoItemsEdit.items
-                                    .reduce((s, i) => s + i.lineTotal, 0)
-                                    .toLocaleString("es-AR")}
-                                </p>
-                                <div className="flex flex-wrap gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={cerrarEdicionItemsPedido}
-                                    disabled={guardandoItemsPedidoId === p.id}
-                                    className="rounded-lg border border-[#2F3E46]/20 bg-white px-3 py-2 text-[11px] font-bold uppercase text-[#2F3E46] transition-colors hover:bg-[#2F3E46]/5 disabled:opacity-50"
-                                  >
-                                    Cancelar
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => void guardarItemsPedidoFirestore()}
-                                    disabled={
-                                      guardandoItemsPedidoId === p.id ||
-                                      pedidoItemsEdit.items.length === 0
-                                    }
-                                    className="rounded-lg bg-[#53634B] px-3 py-2 text-[11px] font-bold uppercase text-white transition-opacity hover:opacity-95 disabled:opacity-50"
-                                  >
-                                    {guardandoItemsPedidoId === p.id
-                                      ? "Guardando…"
-                                      : "Guardar cambios"}
-                                  </button>
-                                </div>
-                              </div>
+                              {p.items.map((i, idx) => {
+                                const prod = productos.find((x) => x.id === i.productId);
+                                return (
+                                  <div key={`${i.productId}-${idx}`} className="mt-1.5">
+                                    <p className="font-heading text-lg font-black uppercase leading-tight tracking-wide text-white">
+                                      {i.name}{" "}
+                                      <span className="text-[#E2781E]">× {i.quantity}</span>
+                                    </p>
+                                    {prod?.description ? (
+                                      <p className="mt-0.5 max-w-md text-[11px] text-[#9CA3AF]">
+                                        {prod.description}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
                             </div>
-                          ) : (
-                            <>
-                              <p className="mt-2 text-xs text-[#2F3E46]/75">
-                                {p.items
-                                  .map((i) => `${i.name} ×${i.quantity}`)
-                                  .join(" · ")}
+                            <div className="text-right">
+                              <p className="font-heading text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
+                                Total del pedido
                               </p>
-                              <p className="mt-1 font-bold text-[#A65D37]">
-                                ${p.total.toLocaleString("es-AR")}
+                              <p className="font-heading text-3xl font-black tracking-tight text-[#E8A882]">
+                                ${formatARS(p.total)}
                               </p>
+                            </div>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem]">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPedidoMsg(null);
+                                setPedidoEditando(p);
+                              }}
+                              disabled={guardandoItemsPedidoId !== null || actualizandoPedidoId === p.id}
+                              className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-dashed border-white/20 bg-transparent font-heading text-xs font-bold uppercase tracking-wide text-[#D1D5DB] hover:border-[#E2781E]/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                                <path strokeLinecap="round" d="M4 21h4l11-11-4-4L4 17v4z" />
+                                <path strokeLinecap="round" d="M14.5 6.5l3 3" />
+                              </svg>
+                              [ Modificar pedido (cantidades / productos) ]
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void eliminarPedido(p)}
+                              disabled={eliminandoPedidoId === p.id || actualizandoPedidoId === p.id}
+                              className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-white/10 font-heading text-xs font-bold uppercase tracking-wide text-[#9CA3AF] hover:border-red-500/40 hover:bg-red-950/40 hover:text-red-400 disabled:opacity-50"
+                            >
+                              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M9 7V5h6v2m-7 4v7m4-7v7m4-7v7M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12" />
+                              </svg>
+                              {eliminandoPedidoId === p.id ? "Eliminando…" : "Eliminar pedido"}
+                            </button>
+                          </div>
+                          <div className="space-y-3 rounded-xl border border-white/[0.06] bg-[#151311] p-4">
+                            {p.clientPhone ? (
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="inline-flex items-center gap-2 text-xs">
+                                  <svg className="h-4 w-4 text-[#22C55E]" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                                    <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
+                                  </svg>
+                                  <span className="font-heading text-[11px] font-bold uppercase tracking-wider text-[#22C55E]">
+                                    Canal directo WhatsApp:
+                                  </span>
+                                  <span className="font-medium text-white">{formatTelAR(p.clientPhone)}</span>
+                                </p>
+                                <span className="inline-flex items-center gap-1.5 font-heading text-[10px] font-bold uppercase tracking-wide text-emerald-400">
+                                  ✓ Número verificado
+                                </span>
+                              </div>
+                            ) : (
+                              <label className="block text-left">
+                                <span className="font-heading text-[10px] font-bold uppercase tracking-wide text-[#E2781E]">
+                                  WhatsApp del cliente (si el pedido es anterior)
+                                </span>
+                                <input
+                                  type="tel"
+                                  inputMode="tel"
+                                  value={waTelManual[p.id] ?? ""}
+                                  onChange={(e) =>
+                                    setWaTelManual((prev) => ({
+                                      ...prev,
+                                      [p.id]: e.target.value,
+                                    }))
+                                  }
+                                  placeholder="+54 9 351 …"
+                                  className="mt-1 w-full rounded-lg border border-white/10 bg-[#1D1B19] px-2.5 py-2 text-xs text-white outline-none focus:ring-1 focus:ring-[#E2781E]/30"
+                                />
+                              </label>
+                            )}
+                            <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-white/[0.06] bg-[#1D1B19]/80 px-3 py-2.5 text-left text-xs leading-snug text-[#D1D5DB]">
+                              <input
+                                type="checkbox"
+                                checked={waPedidoModificado[p.id] === true}
+                                onChange={(e) => {
+                                  const on = e.target.checked;
+                                  setWaPedidoModificado((prev) => ({ ...prev, [p.id]: on }));
+                                  if (on) {
+                                    setWaPlantilla((prev) => ({ ...prev, [p.id]: "ajuste_stock" }));
+                                  }
+                                }}
+                                className="mt-0.5 h-4 w-4 shrink-0 rounded accent-[#E2781E]"
+                              />
+                              <span>
+                                Incluir en el mensaje de WhatsApp que el pedido fue{" "}
+                                <strong className="font-semibold text-white">modificado</strong> o{" "}
+                                <strong className="font-semibold text-white">ajustado</strong> y que puede verificar el comprobante actualizado en «Mi cuenta».
+                              </span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => abrirWhatsAppAlCliente(p)}
+                              className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#198754] font-heading text-xs font-bold uppercase tracking-wide text-white hover:bg-[#157347]"
+                            >
+                              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                                <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
+                              </svg>
+                              Enviar mensaje al cliente por WhatsApp
+                            </button>
+                          </div>
+                          {p.status === "recibido" && (
+                            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem]">
                               <button
                                 type="button"
-                                onClick={() => abrirEdicionItemsPedido(p)}
-                                disabled={
-                                  guardandoItemsPedidoId !== null ||
-                                  actualizandoPedidoId === p.id
-                                }
-                                className="mt-2 w-full rounded-lg border-2 border-dashed border-[#53634B]/35 bg-[#53634B]/6 py-2 text-[11px] font-bold uppercase tracking-wide text-[#53634B] transition-colors hover:bg-[#53634B]/12 disabled:cursor-not-allowed disabled:opacity-50"
+                                disabled={actualizandoPedidoId === p.id}
+                                onClick={() => void cambiarEstadoPedido(p.id, "en_preparacion")}
+                                className="flex h-12 items-center justify-center gap-2 rounded-lg bg-[#E2781E] font-heading text-xs font-bold uppercase tracking-wide text-black hover:bg-[#C96614] disabled:opacity-50"
                               >
-                                Modificar pedido (cantidades / productos)
+                                ✓ Aprobado y en preparación
                               </button>
-                            </>
+                              <button
+                                type="button"
+                                disabled={actualizandoPedidoId === p.id}
+                                onClick={() => void cambiarEstadoPedido(p.id, "cancelado")}
+                                className="flex h-12 items-center justify-center gap-2 rounded-lg border border-white/10 bg-[#2C2926] font-heading text-xs font-semibold uppercase tracking-wide text-[#D1D5DB] hover:bg-red-950/40 hover:text-red-400 disabled:opacity-50"
+                              >
+                                ✕ Rechazar
+                              </button>
+                            </div>
                           )}
-                          {p.clientPhone ? (
-                            <p className="mt-1.5 text-[11px] text-[#53634B]">
-                              WhatsApp cliente:{" "}
-                              <span className="font-mono font-semibold">
-                                +{p.clientPhone}
-                              </span>
-                            </p>
-                          ) : (
-                            <label className="mt-2 block text-left">
-                              <span className="text-[10px] font-bold uppercase tracking-wide text-[#A65D37]">
-                                WhatsApp del cliente (si el pedido es anterior)
-                              </span>
-                              <input
-                                type="tel"
-                                inputMode="tel"
-                                value={waTelManual[p.id] ?? ""}
-                                onChange={(e) =>
-                                  setWaTelManual((prev) => ({
-                                    ...prev,
-                                    [p.id]: e.target.value,
-                                  }))
-                                }
-                                placeholder="+54 9 351 …"
-                                className="mt-1 w-full rounded-lg border border-[#2F3E46]/12 bg-white px-2.5 py-2 text-xs text-[#2F3E46] outline-none focus:ring-2 focus:ring-[#53634B]/25"
-                              />
-                            </label>
-                          )}
-                          <label className="mt-2 flex cursor-pointer items-start gap-2 text-left text-[11px] leading-snug text-[#2F3E46]/85">
-                            <input
-                              type="checkbox"
-                              checked={waPedidoModificado[p.id] === true}
-                              onChange={(e) =>
-                                setWaPedidoModificado((prev) => ({
-                                  ...prev,
-                                  [p.id]: e.target.checked,
-                                }))
-                              }
-                              className="mt-0.5 h-4 w-4 shrink-0 accent-[#53634B]"
-                            />
-                            <span>
-                              Incluir en el mensaje de WhatsApp que el pedido fue{" "}
-                              <strong>modificado o ajustado</strong> y que puede ver el
-                              detalle en «Mi cuenta».
-                              <span className="mt-1 block text-[10px] font-normal text-[#2F3E46]/65">
-                                La confirmación del cliente no está en la web: la coordinás
-                                cuando te responde por WhatsApp.
-                              </span>
-                            </span>
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => abrirWhatsAppAlCliente(p)}
-                            className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border-2 border-[#25d366]/50 bg-[#25d366]/12 py-2.5 font-heading text-[11px] font-bold uppercase tracking-wide text-[#128C7E] transition-colors hover:bg-[#25d366]/20"
-                          >
-                            <span aria-hidden>💬</span>
-                            Enviar mensaje al cliente por WhatsApp
-                          </button>
                         </li>
                       ))}
                     </ul>
-                  ) : null}
+                  )}
                 </section>
               )}
+
+              <footer className="mt-10 flex flex-col items-start justify-between gap-2 border-t border-white/[0.08] pt-5 sm:flex-row sm:items-center">
+                <p className="font-heading text-[10px] font-bold uppercase tracking-widest text-[#6B7280]">
+                  Sangre Nómade · Comercio online · Panel de comerciante
+                </p>
+                <p className="inline-flex items-center gap-2 font-heading text-[10px] font-bold uppercase tracking-wide text-emerald-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  Conexión segura
+                </p>
+              </footer>
             </>
           )}
         </div>
-      </div>
+
+      <ModalModificarPedido
+        pedido={pedidoEditando}
+        productos={productos}
+        open={Boolean(pedidoEditando)}
+        guardando={guardandoItemsPedidoId === pedidoEditando?.id}
+        onClose={() => setPedidoEditando(null)}
+        onGuardar={guardarItemsPedidoFirestore}
+      />
     </div>
   );
 }
