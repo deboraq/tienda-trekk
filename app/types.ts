@@ -66,4 +66,12 @@ export interface Pedido {
   confirmacionClienteVistaPorAdmin?: boolean;
   /** Motivo del último ajuste de ítems (panel admin). */
   motivoModificacion?: string;
+  /** Transporte / correo (ej. Andreani priority express). Opcional en Firestore. */
+  transporte?: string;
+  /** Número de guía para seguimiento. Solo mostrar si existe. */
+  guiaTracking?: string;
+  /** Texto libre de ventana de entrega estimada. */
+  fechaEntregaEstimada?: string;
+  /** Medio de pago acordado (ej. transferencia bancaria). */
+  metodoPago?: string;
 }

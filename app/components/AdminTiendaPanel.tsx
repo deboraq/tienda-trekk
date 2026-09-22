@@ -49,6 +49,7 @@ import { IconCart, IconCreditCard, IconLogout, IconSearch, IconTruck } from "./s
 import { formatTelAR } from "./panels/panel-ui";
 import Image from "next/image";
 import { ModalModificarPedido } from "./ModalModificarPedido";
+import { ResumenTienda } from "./admin/ResumenTienda";
 import {
   actualizarInventarioPorCambioDeItemsPedido,
   cambiarEstadoPedidoConInventario,
@@ -990,161 +991,35 @@ export function AdminTiendaPanel({
               )}
 
               {tab === "resumen" && (
-                <section className="space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-2 rounded-2xl border border-white/10 bg-[#1D1B19] p-4 shadow-sm sm:p-5">
-                    <div>
-                      <h3 className="font-heading text-sm font-bold uppercase tracking-wide text-[#F3F4F6]">
-                        Resumen general
-                      </h3>
-                      <p className="mt-1 text-xs leading-relaxed text-[#F3F4F6]/65">
-                        Números según el catálogo actual y los últimos pedidos cargados en
-                        esta sesión (hasta 100). Usá «Actualizar» para refrescar.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void cargarPedidosAdmin();
-                        void onCatalogoActualizado();
-                      }}
-                      disabled={cargandoPedidos}
-                      className="shrink-0 rounded-full border-2 border-[#E2781E]/35 bg-[#E2781E]/10 px-3 py-2 font-heading text-[10px] font-bold uppercase tracking-wider text-[#F3F4F6] transition-colors hover:bg-[#E2781E]/18 disabled:opacity-50"
-                    >
-                      {cargandoPedidos ? "Actualizando…" : "Actualizar"}
-                    </button>
-                  </div>
-
-                  <div className="rounded-2xl border border-[#E2781E]/25 bg-[#E2781E]/8 p-4 sm:p-5">
-                    <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[#E2781E]">
-                      Inventario (catálogo)
-                    </p>
-                    <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-                      <div className="rounded-xl border border-white/10 bg-[#1D1B19] px-3 py-2">
-                        <dt className="text-[#F3F4F6]/55">Productos publicados</dt>
-                        <dd className="font-heading text-lg font-bold tabular-nums text-[#F3F4F6]">
-                          {resumenStock.totalProductos}
-                        </dd>
-                      </div>
-                      <div className="rounded-xl border border-white/10 bg-[#1D1B19] px-3 py-2">
-                        <dt className="text-[#F3F4F6]/55">Unidades con tope (suma)</dt>
-                        <dd className="font-heading text-lg font-bold tabular-nums text-[#F3F4F6]">
-                          {resumenStock.conLimite.unidades.toLocaleString("es-AR")}
-                        </dd>
-                      </div>
-                      <div className="rounded-xl border border-white/10 bg-[#1D1B19] px-3 py-2">
-                        <dt className="text-[#F3F4F6]/55">Con stock controlado</dt>
-                        <dd className="font-semibold text-[#F3F4F6]">
-                          {resumenStock.conLimite.productos} producto(s)
-                        </dd>
-                      </div>
-                      <div className="rounded-xl border border-white/10 bg-[#1D1B19] px-3 py-2">
-                        <dt className="text-[#F3F4F6]/55">Sin tope en la web</dt>
-                        <dd className="font-semibold text-[#F3F4F6]">
-                          {resumenStock.sinLimite} producto(s)
-                        </dd>
-                      </div>
-                      <div className="rounded-xl border border-[#E2781E]/30 bg-[#1F1B16] px-3 py-2 sm:col-span-2">
-                        <dt className="text-[#E8A882]">Alertas</dt>
-                        <dd className="mt-1 text-[#F3F4F6]">
-                          <span className="font-semibold text-red-300">
-                            Sin unidades: {resumenStock.agotados}
-                          </span>
-                          {" · "}
-                          <span className="font-semibold text-[#8b6914]">
-                            Stock bajo (1–5 u.): {resumenStock.bajoStock}
-                          </span>
-                        </dd>
-                      </div>
-                    </dl>
-                    {resumenStock.criticos.length > 0 && (
-                      <div className="mt-3">
-                        <p className="text-[10px] font-bold uppercase tracking-wide text-[#E2781E]">
-                          Prioridad (menos unidades)
-                        </p>
-                        <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-[11px]">
-                          {resumenStock.criticos.map((c) => (
-                            <li
-                              key={c.name}
-                              className="flex justify-between gap-2 rounded-lg bg-[#1D1B19] px-2 py-1"
-                            >
-                              <span className="min-w-0 truncate text-[#F3F4F6]">{c.name}</span>
-                              <span className="shrink-0 font-mono font-semibold tabular-nums text-[#E2781E]">
-                                {c.stock}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="rounded-2xl border border-[#E2781E]/25 bg-gradient-to-br from-[#151311] to-[#1D1B19]/35 p-4 shadow-sm sm:p-5">
-                    <p className="font-heading text-[10px] font-bold uppercase tracking-[0.15em] text-[#E2781E]">
-                      Pedidos web
-                    </p>
-                    <p className="mt-1 text-[11px] text-[#F3F4F6]/65">
-                      Lista actual: {resumenPedidos.totalEnLista} pedido(s). Suma de totales
-                      en pedidos no cancelados:{" "}
-                      <strong className="text-[#F3F4F6]">
-                        ${resumenPedidos.montoPedidosActivos.toLocaleString("es-AR")}
-                      </strong>{" "}
-                      ({resumenPedidos.cantidadActivos} pedido(s)).
-                    </p>
-                    <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-                      {(
-                        [
-                          ["recibido", "Recibido"],
-                          ["en_preparacion", "En preparación"],
-                          ["enviado", "Enviado"],
-                          ["entregado", "Entregado"],
-                          ["cancelado", "Cancelado"],
-                        ] as const
-                      ).map(([k, label]) => (
-                        <div
-                          key={k}
-                          className="flex items-center justify-between rounded-lg border border-white/10 bg-[#1D1B19] px-3 py-2"
-                        >
-                          <dt className="text-[#F3F4F6]/75">{label}</dt>
-                          <dd className="font-heading font-bold tabular-nums text-[#F3F4F6]">
-                            {resumenPedidos.porEstado[k]}
-                          </dd>
-                        </div>
-                      ))}
-                    </dl>
-                    <div className="mt-3 space-y-2 rounded-xl border border-white/10 bg-[#1D1B19] px-3 py-2 text-[11px] leading-snug text-[#F3F4F6]">
-                      <p>
-                        <strong className="text-[#E8A882]">Modificación sin confirmar</strong>{" "}
-                        (cliente): {resumenPedidos.modificacionPendienteCliente}
-                      </p>
-                      <p>
-                        <strong className="text-[#E2781E]">Cliente confirmó</strong> (pendiente
-                        de marcar visto): {resumenPedidos.clienteConfirmoSinVista}
-                      </p>
-                    </div>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      {([7, 30] as const).map((dias) => {
-                        const w = resumenPedidos.enVentana(dias);
-                        return (
-                          <div
-                            key={dias}
-                            className="rounded-xl border border-white/10 bg-[#1D1B19] px-3 py-2 text-[11px]"
-                          >
-                            <p className="font-heading text-[10px] font-bold uppercase tracking-wide text-[#E2781E]">
-                              Últimos {dias} días
-                            </p>
-                            <p className="mt-1 text-[#F3F4F6]">
-                              {w.cantidad} pedido(s) creados ·{" "}
-                              <span className="font-semibold">
-                                ${w.monto.toLocaleString("es-AR")}
-                              </span>{" "}
-                              total (no cancelados)
-                            </p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </section>
+                <ResumenTienda
+                  pedidos={pedidos}
+                  productos={productos}
+                  actualizando={cargandoPedidos}
+                  onActualizar={() => {
+                    void cargarPedidosAdmin();
+                    void onCatalogoActualizado();
+                  }}
+                  onVerPedidos={() => {
+                    setFiltroEstado("todos");
+                    setFiltroPeriodo("todos");
+                    setTab("pedidos");
+                    setSiteMsg(null);
+                    setPedidoMsg(null);
+                  }}
+                  onVerProductos={() => {
+                    setTab("catalogo");
+                    setCatalogoVista("lista");
+                    resetFormProducto();
+                    setSiteMsg(null);
+                    setPedidoMsg(null);
+                  }}
+                  onIngresarStock={(p) => {
+                    setTab("catalogo");
+                    abrirEditar(p);
+                    setSiteMsg(null);
+                    setPedidoMsg(null);
+                  }}
+                />
               )}
 
               {tab === "portada" && (
