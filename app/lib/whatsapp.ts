@@ -55,6 +55,13 @@ export function urlWhatsAppTiendaConsultaGeneral(): string {
   );
 }
 
+export function urlWhatsAppTiendaPedido(pedidoId: string): string {
+  return urlWhatsAppParaNumero(
+    WHATSAPP_NUMERO_TIENDA,
+    `Hola Sangre Nómade, te escribo desde Mi cuenta por el pedido ${pedidoId}.`
+  );
+}
+
 export const PLANTILLAS_WA_ADMIN = [
   {
     id: "preparacion",

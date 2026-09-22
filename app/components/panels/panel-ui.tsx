@@ -53,25 +53,25 @@ const STEPPER_COPY: Record<
   { title: string; done: string; active: string; pending: string }
 > = {
   recibido: {
-    title: "1. RECIBIDO",
+    title: "1. Recibido",
     done: "Confirmado",
     active: "Orden registrada",
     pending: "Pendiente",
   },
   en_preparacion: {
-    title: "2. EN PREPARACIÓN",
-    done: "Listo",
+    title: "2. En taller",
+    done: "Listo y empacado",
     active: "Armando el paquete",
     pending: "Pendiente",
   },
   enviado: {
-    title: "3. ENVIADO",
+    title: "3. Enviado",
     done: "En transporte",
-    active: "En transporte",
+    active: "En transporte · activo",
     pending: "Pendiente",
   },
   entregado: {
-    title: "4. ENTREGADO",
+    title: "4. Entregado",
     done: "Completado",
     active: "Entregado",
     pending: "Pendiente",
@@ -93,59 +93,50 @@ export function PedidoStepper({ status }: { status: PedidoEstado }) {
   }
 
   const idx = indiceEnFlujoNormal(status);
+  const pct = idx <= 0 ? 0 : (idx / 3) * 100;
 
   return (
-    <div className="rounded-xl border border-white/[0.08] bg-[#151311] p-4 sm:p-5">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <p className="flex items-center gap-2 font-heading text-xs font-bold uppercase tracking-wider text-[#E8A882]">
-          <IconTruck className="h-4 w-4" />
-          Estado del pedido
-        </p>
-        <p className="text-[11px] text-[#9CA3AF]">Paso {idx + 1} de 4 en curso</p>
-      </div>
-      <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="relative py-3">
+      <div className="relative grid grid-cols-4 text-center">
+        <div className="pointer-events-none absolute left-[12%] right-[12%] top-3 h-0.5 bg-white/10">
+          <div className="h-full bg-[#E2781E] transition-all" style={{ width: `${pct}%` }} />
+        </div>
         {PEDIDO_FLUJO_NORMAL.map((step, i) => {
           const copy = STEPPER_COPY[step as Exclude<PedidoEstado, "cancelado">];
           const hecho = i < idx;
           const actual = i === idx;
+          const sub = hecho ? copy.done : actual ? copy.active : copy.pending;
           return (
-            <div
-              key={step}
-              className={`min-w-0 rounded-lg border px-3.5 py-3.5 ${
-                actual
-                  ? "border-[#E2781E]/55 bg-[#E2781E]/10"
-                  : hecho
-                    ? "border-white/10 bg-[#1D1B19]"
-                    : "border-white/[0.08] bg-[#1D1B19]"
-              }`}
-            >
-              <p
-                className={`flex items-center gap-2 font-heading text-[11px] font-bold uppercase tracking-wide ${
-                  actual ? "text-[#E8A882]" : hecho ? "text-white" : "text-[#6B7280]"
+            <div key={step} className="relative z-10 flex flex-col items-center px-1">
+              <span
+                className={`mb-1.5 flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${
+                  hecho || actual
+                    ? "bg-[#E2781E] text-white"
+                    : "bg-white/10 text-[#6B7280]"
                 }`}
               >
-                {hecho ? (
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-[10px] text-black">
-                    ✓
-                  </span>
+                {hecho ? "✓" : actual && step === "enviado" ? (
+                  <IconTruck className="h-3 w-3" />
+                ) : actual ? (
+                  "●"
                 ) : (
-                  <span
-                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
-                      actual ? "bg-[#E2781E] text-black" : "bg-white/10 text-[#6B7280]"
-                    }`}
-                  >
-                    {i + 1}
-                  </span>
+                  i + 1
                 )}
-                {copy.title}
-              </p>
-              <p
-                className={`mt-1.5 pl-7 text-[11px] ${
-                  actual ? "text-[#E8A882]" : hecho ? "italic text-emerald-400" : "text-[#6B7280]"
+              </span>
+              <span
+                className={`font-heading text-[11px] font-bold uppercase ${
+                  actual ? "text-[#E2781E]" : hecho ? "text-white" : "text-[#6B7280]"
                 }`}
               >
-                {hecho ? copy.done : actual ? copy.active : copy.pending}
-              </p>
+                {copy.title}
+              </span>
+              <span
+                className={`mt-0.5 text-[9px] uppercase ${
+                  actual ? "text-[#E8A882]" : hecho ? "text-[#9CA3AF]" : "text-[#6B7280]"
+                }`}
+              >
+                {hecho ? `✓ ${sub}` : actual ? `● ${sub}` : sub}
+              </span>
             </div>
           );
         })}

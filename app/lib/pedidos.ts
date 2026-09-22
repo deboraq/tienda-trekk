@@ -191,6 +191,22 @@ export function docDataAPedido(
       typeof data.motivoModificacion === "string" && data.motivoModificacion.trim()
         ? data.motivoModificacion.trim()
         : undefined,
+    transporte:
+      typeof data.transporte === "string" && data.transporte.trim()
+        ? data.transporte.trim()
+        : undefined,
+    guiaTracking:
+      typeof data.guiaTracking === "string" && data.guiaTracking.trim()
+        ? data.guiaTracking.trim()
+        : undefined,
+    fechaEntregaEstimada:
+      typeof data.fechaEntregaEstimada === "string" && data.fechaEntregaEstimada.trim()
+        ? data.fechaEntregaEstimada.trim()
+        : undefined,
+    metodoPago:
+      typeof data.metodoPago === "string" && data.metodoPago.trim()
+        ? data.metodoPago.trim()
+        : undefined,
   };
 }
 
